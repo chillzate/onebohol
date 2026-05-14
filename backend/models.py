@@ -1,6 +1,7 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean, Text, DateTime
 from sqlalchemy.orm import relationship
 from database import Base
+from datetime import datetime
 
 class User(Base):
     __tablename__ = "users"
@@ -9,20 +10,70 @@ class User(Base):
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     password = Column(String, nullable=False)
-    role = Column(String, default="buyer")
+    phone = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    role = Column(String, default="regular")
+    is_verified = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
     products = relationship("Product", back_populates="farmer")
+    orders = relationship("Order", back_populates="buyer")
+
+class VerificationRequest(Base):
+    __tablename__ = "verification_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    requested_role = Column(String, nullable=False)
+    document_url = Column(String, nullable=True)
+    status = Column(String, default="pending")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Restaurant(Base):
+    __tablename__ = "restaurants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"))
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    address = Column(String, nullable=False)
+    category = Column(String, nullable=False)
+    is_open = Column(Boolean, default=True)
+    delivery_range_km = Column(Float, default=5.0)
+    delivery_fee = Column(Float, default=50.0)
+    image_url = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    menu_items = relationship("MenuItem", back_populates="restaurant")
+class MenuItem(Base):
+    __tablename__ = "menu_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    restaurant_id = Column(Integer, ForeignKey("restaurants.id"))
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    price = Column(Float, nullable=False)
+    category = Column(String, nullable=False)
+    is_available = Column(Boolean, default=True)
+    image_url = Column(String, nullable=True)
+
+    restaurant = relationship("Restaurant", back_populates="menu_items")
 
 class Product(Base):
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True, index=True)
+    farmer_id = Column(Integer, ForeignKey("users.id"))
     name = Column(String, nullable=False)
-    description = Column(String)
+    description = Column(Text, nullable=True)
     price = Column(Float, nullable=False)
     unit = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)
     category = Column(String, nullable=False)
-    farmer_id = Column(Integer, ForeignKey("users.id"))
+    is_available = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
     farmer = relationship("User", back_populates="products")
 
 class Order(Base):
@@ -30,7 +81,48 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     buyer_id = Column(Integer, ForeignKey("users.id"))
-    product_id = Column(Integer, ForeignKey("products.id"))
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    menu_item_id = Column(Integer, ForeignKey("menu_items.id"), nullable=True)
     quantity = Column(Integer, nullable=False)
     total_price = Column(Float, nullable=False)
     status = Column(String, default="pending")
+    order_type = Column(String, nullable=False)
+    delivery_address = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    buyer = relationship("User", back_populates="orders")
+
+class RideRequest(Base):
+    __tablename__ = "ride_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    passenger_id = Column(Integer, ForeignKey("users.id"))
+    pickup_location = Column(String, nullable=False)
+    dropoff_location = Column(String, nullable=False)
+    ride_type = Column(String, nullable=False)
+    status = Column(String, default="pending")
+    fare = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class JobPost(Base):
+    __tablename__ = "job_posts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    poster_id = Column(Integer, ForeignKey("users.id"))
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    location = Column(String, nullable=False)
+    salary = Column(Float, nullable=True)
+    job_type = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class SosAlert(Base):
+    __tablename__ = "sos_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    location = Column(String, nullable=False)
+    alert_type = Column(String, nullable=False)
+    status = Column(String, default="active")
+    created_at = Column(DateTime, default=datetime.utcnow)
