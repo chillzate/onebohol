@@ -18,7 +18,7 @@ class User(Base):
     password = Column(String, nullable=False)
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
-
+    push_token = Column(String, nullable=True)
     profile_image = Column(String, nullable=True)
 
     # ZAVARA ROLES:

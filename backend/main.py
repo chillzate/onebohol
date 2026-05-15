@@ -801,7 +801,7 @@ def get_user_orders(
     ).order_by(Order.created_at.desc()).all()
 
 @app.patch("/orders/{order_id}/status")
-def update_order_status(
+async def update_order_status(
     order_id: int,
     new_status: str,
     db: Session = Depends(get_db)
@@ -823,11 +823,68 @@ def update_order_status(
             status_code=400,
             detail=f"Invalid status. Choose: {valid_statuses}"
         )
+
+    # Update status
     order.status = new_status
     db.commit()
+
+    # AUTO SEND NOTIFICATION! 🔥
+    buyer = db.query(User).filter(
+        User.id == order.buyer_id
+    ).first()
+
+    messages = {
+        "confirmed": {
+            "title": "Order Confirmed! ✅",
+            "body": f"Your order #{str(order_id).zfill(4)} has been confirmed!"
+        },
+        "preparing": {
+            "title": "Cooking Now! 👨‍🍳",
+            "body": f"Your order #{str(order_id).zfill(4)} is being prepared!"
+        },
+        "delivering": {
+            "title": "Rider On The Way! 🛵",
+            "body": f"Your order #{str(order_id).zfill(4)} is on its way!"
+        },
+        "delivered": {
+            "title": "Order Delivered! 🎉",
+            "body": f"Enjoy your order #{str(order_id).zfill(4)}! 😋"
+        },
+        "cancelled": {
+            "title": "Order Cancelled ❌",
+            "body": f"Your order #{str(order_id).zfill(4)} was cancelled."
+        },
+    }
+
+    if buyer and buyer.push_token:
+        msg = messages.get(new_status)
+        if msg:
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        "https://exp.host/--/api/v2/push/send",
+                        json={
+                            "to": buyer.push_token,
+                            "title": msg["title"],
+                            "body": msg["body"],
+                            "sound": "default",
+                            "badge": 1,
+                            "data": {
+                                "order_id": order_id,
+                                "status": new_status
+                            }
+                        },
+                        headers={
+                            "Content-Type": "application/json",
+                        }
+                    )
+            except:
+                pass
+
     return {
         "message": f"Order updated to {new_status}",
-        "order_id": order_id
+        "order_id": order_id,
+        "notification_sent": True
     }
 
 # ============================================
@@ -921,6 +978,151 @@ def delete_job(
     db.delete(job)
     db.commit()
     return {"message": "Job deleted"}
+
+# ============================================
+# PUSH NOTIFICATION ROUTES
+# ============================================
+import httpx
+
+@app.post("/notifications/save-token")
+async def save_push_token(
+    user_id: int,
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """Save Expo push token for user"""
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    user.push_token = token
+    db.commit()
+    return {
+        "message": "✅ Push token saved!",
+        "user_id": user_id
+    }
+
+@app.post("/notifications/send")
+async def send_notification(
+    user_id: int,
+    title: str,
+    body: str,
+    db: Session = Depends(get_db)
+):
+    """Send push notification to user"""
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user or not user.push_token:
+        raise HTTPException(
+            status_code=404,
+            detail="User or token not found"
+        )
+
+    # Send via Expo Push API
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://exp.host/--/api/v2/push/send",
+            json={
+                "to": user.push_token,
+                "title": title,
+                "body": body,
+                "sound": "default",
+                "badge": 1,
+            },
+            headers={
+                "Content-Type": "application/json",
+            }
+        )
+
+    return {
+        "message": "✅ Notification sent!",
+        "response": response.json()
+    }
+
+@app.post("/notifications/send-order-update")
+async def send_order_notification(
+    order_id: int,
+    new_status: str,
+    db: Session = Depends(get_db)
+):
+    """Send notification when order status changes"""
+    order = db.query(Order).filter(
+        Order.id == order_id
+    ).first()
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    buyer = db.query(User).filter(
+        User.id == order.buyer_id
+    ).first()
+
+    if not buyer or not buyer.push_token:
+        return {
+            "message": "No push token found",
+            "sent": False
+        }
+
+    # Status messages
+    messages = {
+        "confirmed": {
+            "title": "Order Confirmed! ✅",
+            "body": f"Your order #{order_id} has been confirmed!"
+        },
+        "preparing": {
+            "title": "Cooking Now! 👨‍🍳",
+            "body": f"Your order #{order_id} is being prepared!"
+        },
+        "delivering": {
+            "title": "Rider On The Way! 🛵",
+            "body": f"Your order #{order_id} is on its way!"
+        },
+        "delivered": {
+            "title": "Order Delivered! 🎉",
+            "body": f"Your order #{order_id} has been delivered!"
+        },
+        "cancelled": {
+            "title": "Order Cancelled ❌",
+            "body": f"Your order #{order_id} was cancelled."
+        },
+    }
+
+    msg = messages.get(new_status, {
+        "title": "Order Update 📦",
+        "body": f"Your order #{order_id} is now {new_status}"
+    })
+
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://exp.host/--/api/v2/push/send",
+            json={
+                "to": buyer.push_token,
+                "title": msg["title"],
+                "body": msg["body"],
+                "sound": "default",
+                "badge": 1,
+                "data": {
+                    "order_id": order_id,
+                    "status": new_status
+                }
+            },
+            headers={
+                "Content-Type": "application/json",
+            }
+        )
+
+    return {
+        "message": "✅ Notification sent!",
+        "order_id": order_id,
+        "status": new_status
+    }
 
 # ============================================
 # SOS ROUTES
