@@ -19,6 +19,8 @@ class User(Base):
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
 
+    profile_image = Column(String, nullable=True)
+
     # ZAVARA ROLES:
     # regular   = normal member/buyer
     # producer  = farmers, fishermen, livestock

@@ -1,4 +1,10 @@
-from fastapi import FastAPI, Depends, HTTPException
+# ============================================
+# ZAVARA MAIN.PY - CLEAN VERSION
+# ============================================
+from fastapi import (
+    FastAPI, Depends, HTTPException,
+    UploadFile, File, Form
+)
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine, Base
 from models import (
@@ -20,10 +26,29 @@ from schemas import (
     VerificationRequestCreate,
     VerificationResponse
 )
-from auth import hash_password, verify_password, create_access_token
+from cloudinary_config import (
+    upload_image,
+    upload_product_image,
+    upload_restaurant_image,
+    upload_profile_image,
+    upload_document,
+    delete_image
+)
+from auth import (
+    hash_password,
+    verify_password,
+    create_access_token
+)
+from dotenv import load_dotenv
 from typing import List, Optional
 from datetime import datetime
+import os
 
+load_dotenv()
+
+# ============================================
+# APP SETUP
+# ============================================
 app = FastAPI(
     title="ZAVARA API 🌴",
     description="Bohol's Super App Platform",
@@ -106,7 +131,8 @@ def read_root():
 # ============================================
 # AUTH ROUTES
 # ============================================
-@app.post("/users/register", response_model=UserResponse)
+@app.post("/users/register",
+    response_model=UserResponse)
 def register_user(
     user: UserRegister,
     db: Session = Depends(get_db)
@@ -132,7 +158,8 @@ def register_user(
     db.refresh(new_user)
     return new_user
 
-@app.post("/users/login", response_model=TokenResponse)
+@app.post("/users/login",
+    response_model=TokenResponse)
 def login_user(
     user: UserLogin,
     db: Session = Depends(get_db)
@@ -147,7 +174,9 @@ def login_user(
             status_code=401,
             detail="Invalid email or password"
         )
-    token = create_access_token(data={"sub": db_user.email})
+    token = create_access_token(
+        data={"sub": db_user.email}
+    )
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -156,12 +185,19 @@ def login_user(
         "role": db_user.role
     }
 
-@app.get("/users/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+@app.get("/users/{user_id}",
+    response_model=UserResponse)
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
         raise HTTPException(
-            status_code=404, detail="User not found"
+            status_code=404,
+            detail="User not found"
         )
     return user
 
@@ -178,20 +214,19 @@ def apply_verification(
     description: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
         raise HTTPException(
-            status_code=404, detail="User not found"
+            status_code=404,
+            detail="User not found"
         )
-
-    # Check valid role
     if requested_role not in ZAVARA_ROLES:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid role. Choose from: {list(ZAVARA_ROLES.keys())}"
         )
-
-    # Check if already has pending application
     existing = db.query(VerificationRequest).filter(
         VerificationRequest.user_id == user_id,
         VerificationRequest.status == "pending"
@@ -201,7 +236,6 @@ def apply_verification(
             status_code=400,
             detail="You already have a pending application"
         )
-
     new_request = VerificationRequest(
         user_id=user_id,
         requested_role=requested_role,
@@ -215,14 +249,13 @@ def apply_verification(
     db.add(new_request)
     db.commit()
     db.refresh(new_request)
-
     return {
-        "message": "Application submitted successfully! ✅",
+        "message": "Application submitted! ✅",
         "application_id": new_request.id,
         "status": "pending",
         "role_applied": requested_role,
         "partner_type": partner_type,
-        "note": "Please upload your documents. Review takes 1-4 hours."
+        "note": "Review takes 1-4 hours."
     }
 
 @app.get("/verify/status/{user_id}")
@@ -232,7 +265,9 @@ def get_verification_status(
 ):
     requests = db.query(VerificationRequest).filter(
         VerificationRequest.user_id == user_id
-    ).order_by(VerificationRequest.created_at.desc()).all()
+    ).order_by(
+        VerificationRequest.created_at.desc()
+    ).all()
 
     if not requests:
         return {
@@ -257,21 +292,22 @@ def approve_verification(
     admin_id: int,
     db: Session = Depends(get_db)
 ):
-    # Check admin
-    admin = db.query(User).filter(User.id == admin_id).first()
+    admin = db.query(User).filter(
+        User.id == admin_id
+    ).first()
     if not admin or admin.role != "admin":
         raise HTTPException(
-            status_code=403, detail="Admin access required"
+            status_code=403,
+            detail="Admin access required"
         )
-
     req = db.query(VerificationRequest).filter(
         VerificationRequest.id == request_id
     ).first()
     if not req:
         raise HTTPException(
-            status_code=404, detail="Request not found"
+            status_code=404,
+            detail="Request not found"
         )
-
     req.status = "approved"
     req.reviewed_by = admin_id
     req.reviewed_at = datetime.utcnow()
@@ -296,26 +332,27 @@ def reject_verification(
     reason: str,
     db: Session = Depends(get_db)
 ):
-    admin = db.query(User).filter(User.id == admin_id).first()
+    admin = db.query(User).filter(
+        User.id == admin_id
+    ).first()
     if not admin or admin.role != "admin":
         raise HTTPException(
-            status_code=403, detail="Admin access required"
+            status_code=403,
+            detail="Admin access required"
         )
-
     req = db.query(VerificationRequest).filter(
         VerificationRequest.id == request_id
     ).first()
     if not req:
         raise HTTPException(
-            status_code=404, detail="Request not found"
+            status_code=404,
+            detail="Request not found"
         )
-
     req.status = "rejected"
     req.rejection_reason = reason
     req.reviewed_by = admin_id
     req.reviewed_at = datetime.utcnow()
     db.commit()
-
     return {
         "message": "Application rejected",
         "reason": reason
@@ -326,16 +363,17 @@ def get_pending_verifications(
     admin_id: int,
     db: Session = Depends(get_db)
 ):
-    admin = db.query(User).filter(User.id == admin_id).first()
+    admin = db.query(User).filter(
+        User.id == admin_id
+    ).first()
     if not admin or admin.role != "admin":
         raise HTTPException(
-            status_code=403, detail="Admin access required"
+            status_code=403,
+            detail="Admin access required"
         )
-
     requests = db.query(VerificationRequest).filter(
         VerificationRequest.status == "pending"
     ).all()
-
     result = []
     for req in requests:
         user = db.query(User).filter(
@@ -347,7 +385,9 @@ def get_pending_verifications(
             "user_name": user.name if user else "Unknown",
             "user_email": user.email if user else "Unknown",
             "requested_role": req.requested_role,
-            "role_label": ZAVARA_ROLES.get(req.requested_role),
+            "role_label": ZAVARA_ROLES.get(
+                req.requested_role
+            ),
             "partner_type": req.partner_type,
             "business_name": req.business_name,
             "business_address": req.business_address,
@@ -371,16 +411,21 @@ def set_user_role(
             status_code=400,
             detail=f"Invalid role. Choose: {list(ZAVARA_ROLES.keys())}"
         )
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
         raise HTTPException(
-            status_code=404, detail="User not found"
+            status_code=404,
+            detail="User not found"
         )
     user.role = new_role
-    user.is_verified = True if new_role != "regular" else False
+    user.is_verified = (
+        True if new_role != "regular" else False
+    )
     db.commit()
     return {
-        "message": f"✅ Role updated!",
+        "message": "✅ Role updated!",
         "user_id": user_id,
         "new_role": new_role,
         "role_label": ZAVARA_ROLES.get(new_role)
@@ -391,12 +436,14 @@ def get_all_users(
     admin_id: int,
     db: Session = Depends(get_db)
 ):
-    admin = db.query(User).filter(User.id == admin_id).first()
+    admin = db.query(User).filter(
+        User.id == admin_id
+    ).first()
     if not admin or admin.role != "admin":
         raise HTTPException(
-            status_code=403, detail="Admin access required"
+            status_code=403,
+            detail="Admin access required"
         )
-
     users = db.query(User).all()
     return [
         {
@@ -418,14 +465,18 @@ def get_admin_dashboard(
     admin_id: int,
     db: Session = Depends(get_db)
 ):
-    admin = db.query(User).filter(User.id == admin_id).first()
+    admin = db.query(User).filter(
+        User.id == admin_id
+    ).first()
     if not admin or admin.role != "admin":
         raise HTTPException(
-            status_code=403, detail="Admin access required"
+            status_code=403,
+            detail="Admin access required"
         )
-
     total_users = db.query(User).count()
-    pending_verifications = db.query(VerificationRequest).filter(
+    pending_verifications = db.query(
+        VerificationRequest
+    ).filter(
         VerificationRequest.status == "pending"
     ).count()
     total_orders = db.query(Order).count()
@@ -454,7 +505,8 @@ def get_admin_dashboard(
 # ============================================
 # RESTAURANT ROUTES
 # ============================================
-@app.post("/restaurants", response_model=RestaurantResponse)
+@app.post("/restaurants",
+    response_model=RestaurantResponse)
 def create_restaurant(
     restaurant: RestaurantCreate,
     owner_id: int,
@@ -475,7 +527,8 @@ def create_restaurant(
     db.refresh(new_restaurant)
     return new_restaurant
 
-@app.get("/restaurants", response_model=List[RestaurantResponse])
+@app.get("/restaurants",
+    response_model=List[RestaurantResponse])
 def get_restaurants(db: Session = Depends(get_db)):
     return db.query(Restaurant).filter(
         Restaurant.is_open == True
@@ -491,7 +544,8 @@ def delete_restaurant(
     ).first()
     if not restaurant:
         raise HTTPException(
-            status_code=404, detail="Restaurant not found"
+            status_code=404,
+            detail="Restaurant not found"
         )
     db.delete(restaurant)
     db.commit()
@@ -509,7 +563,8 @@ def update_restaurant(
     ).first()
     if not restaurant:
         raise HTTPException(
-            status_code=404, detail="Restaurant not found"
+            status_code=404,
+            detail="Restaurant not found"
         )
     restaurant.delivery_range_km = delivery_range_km
     restaurant.delivery_fee = delivery_fee
@@ -561,16 +616,18 @@ def delete_menu_item(
     ).first()
     if not item:
         raise HTTPException(
-            status_code=404, detail="Menu item not found"
+            status_code=404,
+            detail="Menu item not found"
         )
     db.delete(item)
     db.commit()
     return {"message": "Menu item deleted"}
 
 # ============================================
-# PRODUCT ROUTES (Harvest Partners only)
+# PRODUCT ROUTES
 # ============================================
-@app.post("/products", response_model=ProductResponse)
+@app.post("/products",
+    response_model=ProductResponse)
 def create_product(
     product: ProductCreate,
     farmer_id: int,
@@ -581,7 +638,8 @@ def create_product(
     ).first()
     if not farmer:
         raise HTTPException(
-            status_code=404, detail="User not found"
+            status_code=404,
+            detail="User not found"
         )
     if farmer.role not in ["producer", "admin"]:
         raise HTTPException(
@@ -602,15 +660,19 @@ def create_product(
     db.refresh(new_product)
     return new_product
 
-@app.get("/products", response_model=List[ProductResponse])
+@app.get("/products",
+    response_model=List[ProductResponse])
 def get_products(
     user_id: int,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
         raise HTTPException(
-            status_code=404, detail="User not found"
+            status_code=404,
+            detail="User not found"
         )
     if user.role not in ["producer", "seller", "admin"]:
         raise HTTPException(
@@ -631,7 +693,8 @@ def delete_product(
     ).first()
     if not product:
         raise HTTPException(
-            status_code=404, detail="Product not found"
+            status_code=404,
+            detail="Product not found"
         )
     db.delete(product)
     db.commit()
@@ -640,7 +703,8 @@ def delete_product(
 # ============================================
 # ORDER ROUTES
 # ============================================
-@app.post("/orders", response_model=OrderResponse)
+@app.post("/orders",
+    response_model=OrderResponse)
 def create_order(
     order: OrderCreate,
     buyer_id: int,
@@ -651,7 +715,8 @@ def create_order(
     ).first()
     if not buyer:
         raise HTTPException(
-            status_code=404, detail="Buyer not found"
+            status_code=404,
+            detail="Buyer not found"
         )
 
     if order.order_type == "food":
@@ -666,7 +731,8 @@ def create_order(
         ).first()
         if not menu_item:
             raise HTTPException(
-                status_code=404, detail="Menu item not found"
+                status_code=404,
+                detail="Menu item not found"
             )
         total_price = menu_item.price * order.quantity
         new_order = Order(
@@ -695,11 +761,13 @@ def create_order(
         ).first()
         if not product:
             raise HTTPException(
-                status_code=404, detail="Product not found"
+                status_code=404,
+                detail="Product not found"
             )
         if product.quantity < order.quantity:
             raise HTTPException(
-                status_code=400, detail="Not enough stock"
+                status_code=400,
+                detail="Not enough stock"
             )
         total_price = product.price * order.quantity
         new_order = Order(
@@ -718,10 +786,12 @@ def create_order(
         return new_order
     else:
         raise HTTPException(
-            status_code=400, detail="Invalid order type"
+            status_code=400,
+            detail="Invalid order type"
         )
 
-@app.get("/orders/user/{user_id}", response_model=List[OrderResponse])
+@app.get("/orders/user/{user_id}",
+    response_model=List[OrderResponse])
 def get_user_orders(
     user_id: int,
     db: Session = Depends(get_db)
@@ -741,7 +811,8 @@ def update_order_status(
     ).first()
     if not order:
         raise HTTPException(
-            status_code=404, detail="Order not found"
+            status_code=404,
+            detail="Order not found"
         )
     valid_statuses = [
         "pending", "confirmed", "preparing",
@@ -755,7 +826,7 @@ def update_order_status(
     order.status = new_status
     db.commit()
     return {
-        "message": f"Order status updated to {new_status}",
+        "message": f"Order updated to {new_status}",
         "order_id": order_id
     }
 
@@ -821,7 +892,8 @@ def delete_job(
     ).first()
     if not job:
         raise HTTPException(
-            status_code=404, detail="Job not found"
+            status_code=404,
+            detail="Job not found"
         )
     db.delete(job)
     db.commit()
@@ -851,3 +923,224 @@ def get_sos_alerts(db: Session = Depends(get_db)):
     return db.query(SosAlert).filter(
         SosAlert.status == "active"
     ).all()
+
+# ============================================
+# IMAGE UPLOAD ROUTES
+# ============================================
+@app.post("/upload/profile/{user_id}")
+async def upload_profile_photo(
+    user_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    if file.content_type not in [
+        "image/jpeg", "image/png",
+        "image/jpg", "image/webp"
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail="Only JPEG, PNG, JPG, WEBP allowed"
+        )
+    file_bytes = await file.read()
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large. Max 5MB"
+        )
+    result = upload_profile_image(file_bytes)
+    if not result["success"]:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {result['error']}"
+        )
+    user.profile_image = result["url"]
+    db.commit()
+    return {
+        "message": "Profile photo uploaded! ✅",
+        "image_url": result["url"],
+        "public_id": result["public_id"]
+    }
+
+@app.post("/upload/product/{product_id}")
+async def upload_product_photo(
+    product_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    product = db.query(Product).filter(
+        Product.id == product_id
+    ).first()
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+    if file.content_type not in [
+        "image/jpeg", "image/png",
+        "image/jpg", "image/webp"
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail="Only JPEG, PNG, JPG, WEBP allowed"
+        )
+    file_bytes = await file.read()
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large. Max 5MB"
+        )
+    result = upload_product_image(file_bytes)
+    if not result["success"]:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {result['error']}"
+        )
+    product.image_url = result["url"]
+    db.commit()
+    return {
+        "message": "Product photo uploaded! ✅",
+        "image_url": result["url"],
+        "public_id": result["public_id"]
+    }
+
+@app.post("/upload/restaurant/{restaurant_id}")
+async def upload_restaurant_photo(
+    restaurant_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    restaurant = db.query(Restaurant).filter(
+        Restaurant.id == restaurant_id
+    ).first()
+    if not restaurant:
+        raise HTTPException(
+            status_code=404,
+            detail="Restaurant not found"
+        )
+    if file.content_type not in [
+        "image/jpeg", "image/png",
+        "image/jpg", "image/webp"
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail="Only JPEG, PNG, JPG, WEBP allowed"
+        )
+    file_bytes = await file.read()
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large. Max 5MB"
+        )
+    result = upload_restaurant_image(file_bytes)
+    if not result["success"]:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {result['error']}"
+        )
+    restaurant.image_url = result["url"]
+    db.commit()
+    return {
+        "message": "Restaurant photo uploaded! ✅",
+        "image_url": result["url"],
+        "public_id": result["public_id"]
+    }
+
+@app.post("/upload/document/{user_id}")
+async def upload_verification_document(
+    user_id: int,
+    doc_type: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    if file.content_type not in [
+        "image/jpeg", "image/png",
+        "image/jpg", "image/webp",
+        "application/pdf"
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail="Only images and PDF allowed"
+        )
+    file_bytes = await file.read()
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large. Max 10MB"
+        )
+    result = upload_document(file_bytes)
+    if not result["success"]:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {result['error']}"
+        )
+    verification = db.query(VerificationRequest).filter(
+        VerificationRequest.user_id == user_id,
+        VerificationRequest.status == "pending"
+    ).first()
+    if verification:
+        if doc_type == "valid_id":
+            verification.valid_id_url = result["url"]
+        elif doc_type == "business_permit":
+            verification.business_permit_url = result["url"]
+        elif doc_type == "selfie":
+            verification.selfie_url = result["url"]
+        elif doc_type == "extra_doc":
+            verification.extra_doc_url = result["url"]
+        else:
+            verification.document_url = result["url"]
+        db.commit()
+    return {
+        "message": f"{doc_type} uploaded! ✅",
+        "image_url": result["url"],
+        "public_id": result["public_id"],
+        "doc_type": doc_type
+    }
+
+@app.post("/upload/general")
+async def upload_general_image(
+    file: UploadFile = File(...)
+):
+    if file.content_type not in [
+        "image/jpeg", "image/png",
+        "image/jpg", "image/webp"
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail="Only JPEG, PNG, JPG, WEBP allowed"
+        )
+    file_bytes = await file.read()
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large. Max 5MB"
+        )
+    result = upload_image(
+        file_bytes,
+        folder="zavara/general"
+    )
+    if not result["success"]:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {result['error']}"
+        )
+    return {
+        "message": "Image uploaded! ✅",
+        "image_url": result["url"],
+        "public_id": result["public_id"]
+    }
