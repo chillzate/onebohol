@@ -1,33 +1,246 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
   View,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   LogBox,
   ScrollView,
-  StatusBar
+  StatusBar,
+  Animated,
+  Dimensions,
+  Image,
+  Alert,
 } from 'react-native';
 import axios from 'axios';
 import * as SplashScreen from 'expo-splash-screen';
 import * as SecureStore from 'expo-secure-store';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import FoodScreen from './screens/FoodScreen';
-import { colors, fonts, shadow, borderRadius } from './theme';
+import OrderHistoryScreen from './screens/OrderHistoryScreen';
+import OnboardingScreen from './screens/OnboardingScreen';
+import { ToastProvider, showToast } from './screens/ToastManager';
+import {
+  pickImageFromGallery,
+  takePhoto,
+  uploadProfilePhoto,
+} from './screens/ImagePickerHelper';
+import {
+  registerForPushNotifications,
+  setupNotificationListeners,
+  removeNotificationListeners,
+} from './screens/NotificationHelper';
+import {
+  colors,
+  shadow,
+  shadowMd,
+  shadowLg,
+  shadowDark,
+  shadowStrong,
+  shadowGold,
+  borderRadius,
+  fonts,
+} from './theme';
 
 LogBox.ignoreLogs(['Warning:']);
-
-// Keep splash screen visible while loading
 SplashScreen.preventAutoHideAsync();
 
-const API_URL = 'http://192.168.55.210:8000';
+const { width } = Dimensions.get('window');
+const API_URL = 'https://onebohol-production.up.railway.app';
 
-export default function App() {
+// ============================================
+// HELPERS
+// ============================================
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good Morning';
+  if (hour < 17) return 'Good Afternoon';
+  if (hour < 21) return 'Good Evening';
+  return 'Good Night';
+}
+
+function getGreetingEmoji() {
+  const hour = new Date().getHours();
+  if (hour < 12) return '☀️';
+  if (hour < 17) return '🌤️';
+  if (hour < 21) return '🌅';
+  return '🌙';
+}
+
+// ============================================
+// LOADING SCREEN
+// ============================================
+function LoadingScreen() {
+  const logoScale = useRef(new Animated.Value(0.8)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const taglineOpacity = useRef(new Animated.Value(0)).current;
+  const lineWidth = useRef(new Animated.Value(0)).current;
+  const bottomOpacity = useRef(new Animated.Value(0)).current;
+  const shimmer = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.parallel([
+        Animated.spring(logoScale, {
+          toValue: 1,
+          friction: 8,
+          tension: 40,
+          useNativeDriver: true,
+        }),
+        Animated.timing(logoOpacity, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.timing(lineWidth, {
+        toValue: 80,
+        duration: 600,
+        useNativeDriver: false,
+      }),
+      Animated.timing(taglineOpacity, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+      }),
+      Animated.timing(bottomOpacity, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmer, {
+          toValue: 1,
+          duration: 2000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shimmer, {
+          toValue: 0,
+          duration: 2000,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  return (
+    <View style={LS.container}>
+      <StatusBar
+        backgroundColor={colors.backgroundWarm}
+        barStyle="dark-content"
+      />
+      <Animated.View style={[LS.topDeco,
+        { opacity: taglineOpacity }]}>
+        <View style={LS.decoLine} />
+        <Text style={LS.decoText}>EST. 2024</Text>
+        <View style={LS.decoLine} />
+      </Animated.View>
+      <Animated.View style={[LS.logoWrap, {
+        opacity: logoOpacity,
+        transform: [{ scale: logoScale }],
+      }]}>
+        <Animated.Text style={[LS.brand, {
+          opacity: shimmer.interpolate({
+            inputRange: [0, 0.5, 1],
+            outputRange: [1, 0.7, 1],
+          }),
+        }]}>
+          ZAVARA
+        </Animated.Text>
+      </Animated.View>
+      <Animated.View style={[LS.line,
+        { width: lineWidth }]} />
+      <Animated.Text style={[LS.tagline,
+        { opacity: taglineOpacity }]}>
+        THE ISLAND'S PULSE
+      </Animated.Text>
+      <Animated.View style={[LS.loadingWrap,
+        { opacity: bottomOpacity }]}>
+        <ActivityIndicator
+          size="small"
+          color={colors.primary}
+        />
+      </Animated.View>
+      <Animated.View style={[LS.bottomWrap,
+        { opacity: bottomOpacity }]}>
+        <Text style={LS.bottomText}>
+          Bohol's Super App 🌴
+        </Text>
+      </Animated.View>
+    </View>
+  );
+}
+
+const LS = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.backgroundWarm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topDeco: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 50,
+  },
+  decoLine: {
+    width: 35,
+    height: 1,
+    backgroundColor: colors.borderMedium,
+    marginHorizontal: 12,
+  },
+  decoText: {
+    color: colors.textMuted,
+    fontSize: 9,
+    letterSpacing: 4,
+    fontWeight: '700',
+  },
+  logoWrap: { marginBottom: 20 },
+  brand: {
+    fontSize: 52,
+    fontWeight: '900',
+    color: colors.primary,
+    letterSpacing: 14,
+  },
+  line: {
+    height: 2,
+    backgroundColor: colors.primary,
+    marginBottom: 16,
+    borderRadius: 2,
+  },
+  tagline: {
+    fontSize: 10,
+    color: colors.textLight,
+    letterSpacing: 5,
+    marginBottom: 50,
+    fontWeight: '600',
+  },
+  loadingWrap: { marginBottom: 60 },
+  bottomWrap: {
+    position: 'absolute',
+    bottom: 50,
+  },
+  bottomText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    letterSpacing: 1,
+  },
+});
+
+// ============================================
+// MAIN APP CONTENT
+// ============================================
+function AppContent() {
+
+  // ── STATES ────────────────────────────────
   const [screen, setScreen] = useState('loading');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -39,47 +252,68 @@ export default function App() {
   const [userRole, setUserRole] = useState('regular');
   const [appReady, setAppReady] = useState(false);
   const [location, setLocation] = useState(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [profileImage, setProfileImage] = useState(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
-  // ✅ CHECK SAVED LOGIN ON APP START
-  useEffect(() => {
-    prepareApp();
-  }, []);
+  useEffect(() => { prepareApp(); }, []);
 
-const prepareApp = async () => {
+  // ── APP STARTUP ───────────────────────────
+  const prepareApp = async () => {
     try {
-      // Wait 1.5 seconds for splash effect
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      // Hide the native splash screen
+      await new Promise(r => setTimeout(r, 2500));
       await SplashScreen.hideAsync();
-
-      // Request GPS permission
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({});
-        setLocation(loc);
+      const hasSeenOnboarding = await AsyncStorage.getItem(
+        'hasSeenOnboarding'
+      );
+      if (!hasSeenOnboarding) {
+        setShowOnboarding(true);
+        setAppReady(true);
+        return;
       }
+      await loadApp();
+    } catch {
+      setScreen('login');
+    } finally {
+      setAppReady(true);
+    }
+  };
 
-      // Check if user is already logged in
-      const savedEmail = await SecureStore.getItemAsync('userEmail');
-      const savedPassword = await SecureStore.getItemAsync('userPassword');
+  const loadApp = async () => {
+    try {
+      try {
+        const { status } =
+          await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc =
+            await Location.getCurrentPositionAsync({});
+          setLocation(loc);
+        }
+      } catch {}
+
+      const savedEmail =
+        await SecureStore.getItemAsync('userEmail');
+      const savedPassword =
+        await SecureStore.getItemAsync('userPassword');
 
       if (savedEmail && savedPassword) {
         try {
-          const response = await axios.post(
+          const res = await axios.post(
             `${API_URL}/users/login`,
             { email: savedEmail, password: savedPassword },
             {
-              headers: { 'Content-Type': 'application/json' },
-              timeout: 10000
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              timeout: 10000,
             }
           );
-          setLoggedInUser(response.data.user_name);
-          setUserId(response.data.user_id);
-          setUserRole(response.data.role);
+          setLoggedInUser(res.data.user_name);
+          setUserId(res.data.user_id);
+          setUserRole(res.data.role);
           setEmail(savedEmail);
           setScreen('home');
-        } catch (error) {
+        } catch {
           await SecureStore.deleteItemAsync('userEmail');
           await SecureStore.deleteItemAsync('userPassword');
           setScreen('login');
@@ -87,46 +321,20 @@ const prepareApp = async () => {
       } else {
         setScreen('login');
       }
-
-    } catch (error) {
+    } catch {
       setScreen('login');
-    } finally {
-      setAppReady(true);
     }
   };
 
-  const onLayoutRootView = useCallback(async () => {
-    if (appReady) {
-      await SplashScreen.hideAsync();
-    }
-  }, [appReady]);
-
-  if (!appReady || screen === 'loading') {
-    return (
-      <View style={styles.loadingContainer}>
-        <StatusBar backgroundColor={colors.primaryDark} barStyle="light-content" />
-        <Text style={styles.loadingLogo}>🌴</Text>
-        <Text style={styles.loadingAppName}>OneBohol</Text>
-        <Text style={styles.loadingTagline}>Connecting Bohol</Text>
-        <ActivityIndicator
-          size="large"
-          color={colors.primaryLight}
-          style={{ marginTop: 30 }}
-        />
-      </View>
-    );
-  }
-
-  // ✅ SAVE LOGIN INFO
-  const saveLogin = async (emailVal, passwordVal, nameVal, idVal, roleVal) => {
-    await SecureStore.setItemAsync('userEmail', emailVal);
-    await SecureStore.setItemAsync('userPassword', passwordVal);
-    await SecureStore.setItemAsync('userName', nameVal);
-    await SecureStore.setItemAsync('userId', idVal.toString());
-    await SecureStore.setItemAsync('userRole', roleVal);
+  // ── AUTH HELPERS ──────────────────────────
+  const saveLogin = async (e, p, n, i, r) => {
+    await SecureStore.setItemAsync('userEmail', e);
+    await SecureStore.setItemAsync('userPassword', p);
+    await SecureStore.setItemAsync('userName', n);
+    await SecureStore.setItemAsync('userId', i.toString());
+    await SecureStore.setItemAsync('userRole', r);
   };
 
-  // ✅ CLEAR LOGIN INFO
   const clearLogin = async () => {
     await SecureStore.deleteItemAsync('userEmail');
     await SecureStore.deleteItemAsync('userPassword');
@@ -135,44 +343,73 @@ const prepareApp = async () => {
     await SecureStore.deleteItemAsync('userRole');
   };
 
+  // ── LOGIN ─────────────────────────────────
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      showToast('warning', 'Missing Fields',
+        'Please fill in all fields');
       return;
     }
     setLoading(true);
     try {
-      const response = await axios.post(
+      const res = await axios.post(
         `${API_URL}/users/login`,
         { email, password },
         {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
+          timeout: 10000,
         }
       );
-      setLoggedInUser(response.data.user_name);
-      setUserId(response.data.user_id);
-      setUserRole(response.data.role);
-
-      // Save login for next time
+      setLoggedInUser(res.data.user_name);
+      setUserId(res.data.user_id);
+      setUserRole(res.data.role);
       await saveLogin(
-        email,
-        password,
-        response.data.user_name,
-        response.data.user_id,
-        response.data.role
+        email, password,
+        res.data.user_name,
+        res.data.user_id,
+        res.data.role
       );
-
-      setScreen('home');
-    } catch (error) {
-      Alert.alert('Login Failed', 'Invalid email or password');
+      showToast('success', 'Welcome Back! 👋',
+        `Good to see you, ${res.data.user_name}!`);
+      setTimeout(() => setScreen('home'), 1000);
+    } catch {
+      showToast('error', 'Login Failed',
+        'Invalid email or password');
     }
     setLoading(false);
   };
+  // After successful login add this:
+useEffect(() => {
+  if (userId) {
+    // Register for push notifications
+    registerForPushNotifications(userId);
 
+    // Setup listeners
+    const listeners = setupNotificationListeners(
+      (notification) => {
+        console.log('Got notification!', notification);
+      },
+      (response) => {
+        // Navigate based on notification data
+        const data = response.notification
+          .request.content.data;
+        if (data.order_id) {
+          setScreen('orders');
+        }
+      }
+    );
+
+    return () => {
+      removeNotificationListeners(listeners);
+    };
+  }
+}, [userId]);
+
+  // ── REGISTER ──────────────────────────────
   const handleRegister = async () => {
     if (!name || !email || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      showToast('warning', 'Missing Fields',
+        'Please fill in all fields');
       return;
     }
     setLoading(true);
@@ -182,30 +419,188 @@ const prepareApp = async () => {
         { name, email, password, phone },
         {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
+          timeout: 10000,
         }
       );
-      Alert.alert('Success! 🎉', 'Account created! Please login.');
-      setScreen('login');
-    } catch (error) {
-      Alert.alert('Error', 'Registration failed. Try again.');
+      showToast('success', 'Account Created! 🎉',
+        'Welcome to ZAVARA! Please login.');
+      setTimeout(() => setScreen('login'), 1500);
+    } catch {
+      showToast('error', 'Registration Failed',
+        'Email may already be registered.');
     }
     setLoading(false);
   };
 
+  // ── LOGOUT ────────────────────────────────
   const handleLogout = async () => {
     await clearLogin();
-    setScreen('login');
-    setEmail('');
-    setPassword('');
-    setName('');
-    setPhone('');
-    setLoggedInUser('');
-    setUserId(null);
-    setUserRole('regular');
+    showToast('info', 'Logged Out',
+      'See you next time! 👋');
+    setTimeout(() => {
+      setScreen('login');
+      setEmail('');
+      setPassword('');
+      setName('');
+      setPhone('');
+      setLoggedInUser('');
+      setUserId(null);
+      setUserRole('regular');
+      setProfileImage(null);
+    }, 1000);
   };
 
-  // FOOD SCREEN
+  // ── PROFILE PHOTO UPLOAD ──────────────────
+  const handleProfilePhotoUpload = async (source) => {
+    let imageAsset = null;
+    if (source === 'gallery') {
+      imageAsset = await pickImageFromGallery();
+    } else {
+      imageAsset = await takePhoto();
+    }
+    if (!imageAsset) return;
+
+    setUploadingPhoto(true);
+    const result = await uploadProfilePhoto(
+      userId,
+      imageAsset
+    );
+    if (result.success) {
+      setProfileImage(result.url);
+      showToast('success', 'Photo Updated! ✅',
+        'Your profile photo has been updated!');
+    } else {
+      showToast('error', 'Upload Failed',
+        'Could not upload photo. Try again.');
+    }
+    setUploadingPhoto(false);
+  };
+
+  // ── ROLE HELPERS ──────────────────────────
+  const getRoleBadge = () => {
+    const badges = {
+      regular:   '👤 Member',
+      producer:  '🌾 Harvest Partner',
+      seller:    '🏪 Market Seller',
+      transport: '🚐 Swift Partner',
+      haven:     '🏨 Haven Partner',
+      cuisine:   '🍴 Cuisine Partner',
+      admin:     '⚙️ Overseer',
+    };
+    return badges[userRole] || userRole.toUpperCase();
+  };
+
+  const getRoleBanner = () => {
+    const banners = {
+      producer:  '🌾 Verified Harvest Partner',
+      seller:    '🏪 Verified Market Seller',
+      transport: '🚐 Verified Swift Partner',
+      haven:     '🏨 Verified Haven Partner',
+      cuisine:   '🍴 Verified Cuisine Partner',
+      admin:     '⚙️ Overseer Account',
+    };
+    return banners[userRole] || '';
+  };
+
+  const getRoleColor = () => {
+    const c = {
+      producer:  colors.farmerColor,
+      seller:    colors.vendorColor,
+      transport: colors.riderColor,
+      haven:     colors.havenColor,
+      cuisine:   colors.cuisineColor,
+      admin:     colors.adminColor,
+    };
+    return c[userRole] || colors.primary;
+  };
+
+  const getRoleBg = () => {
+    const b = {
+      producer:  colors.farmerBg,
+      seller:    colors.vendorBg,
+      transport: colors.riderBg,
+      haven:     colors.havenBg,
+      cuisine:   colors.cuisineBg,
+      admin:     colors.adminBg,
+    };
+    return b[userRole] || colors.primaryPale;
+  };
+
+  // ── BOTTOM NAV ────────────────────────────
+  const BottomNav = () => (
+    <View style={styles.bottomNav}>
+      {[
+        { s: 'home',        icon: '🏠', label: 'Home'   },
+        { s: 'restaurants', icon: '🍴', label: 'Food'   },
+        { s: 'orders',      icon: '📦', label: 'Orders' },
+        { s: 'profile',     icon: '👤', label: 'Me'     },
+      ].map((tab) => (
+        <TouchableOpacity
+          key={tab.s}
+          style={styles.navItem}
+          onPress={() => setScreen(tab.s)}>
+          <Text style={[
+            styles.navIcon,
+            screen === tab.s && styles.navIconActive,
+          ]}>
+            {tab.icon}
+          </Text>
+          <Text style={[
+            styles.navLabel,
+            screen === tab.s && styles.navLabelActive,
+          ]}>
+            {tab.label}
+          </Text>
+          {screen === tab.s && (
+            <View style={styles.navDot} />
+          )}
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
+  // ============================================
+  // ONBOARDING
+  // ============================================
+  if (showOnboarding) {
+    return (
+      <OnboardingScreen
+        onFinish={async () => {
+          await AsyncStorage.setItem(
+            'hasSeenOnboarding', 'true'
+          );
+          setShowOnboarding(false);
+          await loadApp();
+        }}
+      />
+    );
+  }
+
+  // ============================================
+  // LOADING
+  // ============================================
+  if (!appReady || screen === 'loading') {
+    return <LoadingScreen />;
+  }
+
+  // ============================================
+  // ORDERS
+  // ============================================
+  if (screen === 'orders') {
+    return (
+      <View style={styles.container}>
+        <OrderHistoryScreen
+          userId={userId}
+          onBack={() => setScreen('home')}
+        />
+        <BottomNav />
+      </View>
+    );
+  }
+
+  // ============================================
+  // FOOD
+  // ============================================
   if (screen === 'restaurants') {
     return (
       <FoodScreen
@@ -215,538 +610,503 @@ const prepareApp = async () => {
     );
   }
 
-  // RIDE SCREEN
-  if (screen === 'ride') {
+  // ============================================
+  // COMING SOON
+  // ============================================
+  if ([
+    'ride', 'jobs', 'sos',
+    'my_products', 'add_product',
+    'wholesale', 'my_store',
+  ].includes(screen)) {
+    const cfg = {
+      ride: {
+        icon: '🏎️', title: 'Transport',
+        color: colors.riderColor,
+      },
+      jobs: {
+        icon: '💼', title: 'Careers',
+        color: colors.primary,
+      },
+      sos: {
+        icon: '🛡️', title: 'Safety & SOS',
+        color: colors.danger,
+      },
+      my_products: {
+        icon: '🌾', title: 'My Products',
+        color: colors.farmerColor,
+      },
+      add_product: {
+        icon: '➕', title: 'Add Product',
+        color: colors.farmerColor,
+      },
+      wholesale: {
+        icon: '🛒', title: 'Wholesale Market',
+        color: colors.primary,
+      },
+      my_store: {
+        icon: '🏪', title: 'My Store',
+        color: colors.vendorColor,
+      },
+    }[screen];
+
     return (
       <View style={styles.container}>
-        <StatusBar backgroundColor={colors.primaryDark} barStyle="light-content" />
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backBtn}>← Back</Text>
+        <StatusBar
+          backgroundColor={colors.headerBg}
+          barStyle="dark-content"
+        />
+        <View style={styles.elegantHeader}>
+          <TouchableOpacity
+            onPress={() => setScreen('home')}>
+            <Text style={styles.headerBack}>←</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>🚗 Ride</Text>
+          <Text style={styles.headerTitleCenter}>
+            {cfg.title}
+          </Text>
+          <View style={{ width: 30 }} />
         </View>
         <View style={styles.centerContent}>
-          <Text style={styles.comingSoonIcon}>🚗</Text>
-          <Text style={styles.comingSoonTitle}>Ride Booking</Text>
-          <Text style={styles.comingSoonSub}>Coming Soon!</Text>
+          <View style={[styles.comingSoonCircle,
+            { backgroundColor: cfg.color + '12' }]}>
+            <Text style={styles.comingSoonIcon}>
+              {cfg.icon}
+            </Text>
+          </View>
+          <Text style={styles.comingSoonTitle}>
+            {cfg.title}
+          </Text>
+          <Text style={styles.comingSoonSub}>
+            COMING SOON
+          </Text>
+          <View style={styles.comingSoonBadge}>
+            <Text style={styles.comingSoonBadgeText}>
+              We're working on it 🔥
+            </Text>
+          </View>
         </View>
       </View>
     );
   }
 
-  // JOBS SCREEN
-  if (screen === 'jobs') {
-    return (
-      <View style={styles.container}>
-        <StatusBar backgroundColor={colors.primaryDark} barStyle="light-content" />
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backBtn}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>💼 Jobs</Text>
-        </View>
-        <View style={styles.centerContent}>
-          <Text style={styles.comingSoonIcon}>💼</Text>
-          <Text style={styles.comingSoonTitle}>Jobs Board</Text>
-          <Text style={styles.comingSoonSub}>Coming Soon!</Text>
-        </View>
-      </View>
-    );
-  }
-
-  // SOS SCREEN
-  if (screen === 'sos') {
-    return (
-      <View style={styles.container}>
-        <StatusBar backgroundColor={colors.danger} barStyle="light-content" />
-        <View style={[styles.header, { backgroundColor: colors.danger }]}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backBtn}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>🚨 SOS Emergency</Text>
-        </View>
-        <View style={styles.centerContent}>
-          <Text style={styles.comingSoonIcon}>🚨</Text>
-          <Text style={styles.comingSoonTitle}>SOS Emergency</Text>
-          <Text style={styles.comingSoonSub}>Coming Soon!</Text>
-        </View>
-      </View>
-    );
-  }
-
-  // PROFILE SCREEN
+  // ============================================
+  // PROFILE
+  // ============================================
   if (screen === 'profile') {
     return (
       <View style={styles.container}>
-        <StatusBar backgroundColor={colors.primaryDark} barStyle="light-content" />
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backBtn}>← Back</Text>
+        <StatusBar
+          backgroundColor={colors.headerBg}
+          barStyle="dark-content"
+        />
+        <View style={styles.elegantHeader}>
+          <TouchableOpacity
+            onPress={() => setScreen('home')}>
+            <Text style={styles.headerBack}>←</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>👤 Profile</Text>
+          <Text style={styles.headerTitleCenter}>
+            My Profile
+          </Text>
+          <View style={{ width: 30 }} />
         </View>
-        <ScrollView contentContainerStyle={styles.profileContainer}>
-          <View style={styles.profileAvatar}>
-            <Text style={styles.profileAvatarText}>
-              {loggedInUser.charAt(0).toUpperCase()}
-            </Text>
-          </View>
-          <Text style={styles.profileName}>{loggedInUser}</Text>
-          <Text style={styles.profileEmail}>{email}</Text>
-          <View style={[
-            styles.roleBadge,
-            userRole === 'farmer' && { backgroundColor: colors.farmerColor },
-            userRole === 'vendor' && { backgroundColor: colors.vendorColor },
-            userRole === 'admin' && { backgroundColor: colors.adminColor },
-          ]}>
-            <Text style={styles.roleBadgeText}>
-              {userRole === 'regular' ? '👤 Regular User' :
-               userRole === 'farmer' ? '👨‍🌾 Verified Farmer' :
-               userRole === 'vendor' ? '🏪 Verified Vendor' :
-               userRole === 'admin' ? '⚙️ Admin' : userRole}
-            </Text>
-          </View>
-          {location && (
-            <View style={styles.locationBadge}>
-              <Text style={styles.locationText}>
-                📍 Location: {location.coords.latitude.toFixed(4)},
-                {location.coords.longitude.toFixed(4)}
-              </Text>
+
+        <ScrollView contentContainerStyle={[
+          styles.profileContainer,
+          { paddingBottom: 90 },
+        ]}>
+
+          {/* AVATAR WITH UPLOAD */}
+          <TouchableOpacity
+            onPress={() => {
+              Alert.alert(
+                'Update Profile Photo',
+                'Choose a source',
+                [
+                  {
+                    text: '📷 Camera',
+                    onPress: () =>
+                      handleProfilePhotoUpload('camera'),
+                  },
+                  {
+                    text: '🖼️ Gallery',
+                    onPress: () =>
+                      handleProfilePhotoUpload('gallery'),
+                  },
+                  {
+                    text: 'Cancel',
+                    style: 'cancel',
+                  },
+                ]
+              );
+            }}>
+            <View style={styles.profileAvatarWrap}>
+              {profileImage ? (
+                <Image
+                  source={{ uri: profileImage }}
+                  style={styles.profileAvatar}
+                />
+              ) : (
+                <View style={styles.profileAvatar}>
+                  {uploadingPhoto ? (
+                    <ActivityIndicator
+                      color={colors.textWhite}
+                      size="large"
+                    />
+                  ) : (
+                    <Text style={styles.profileAvatarText}>
+                      {loggedInUser.charAt(0).toUpperCase()}
+                    </Text>
+                  )}
+                </View>
+              )}
+              <View style={styles.profileCameraBtn}>
+                <Text style={styles.profileCameraBtnText}>
+                  📷
+                </Text>
+              </View>
             </View>
-          )}
+          </TouchableOpacity>
+
+          <Text style={styles.profileName}>
+            {loggedInUser}
+          </Text>
+          <Text style={styles.profileEmail}>{email}</Text>
+
+          <View style={[styles.roleBadge, {
+            borderColor: getRoleColor() + '30',
+            backgroundColor: getRoleBg(),
+          }]}>
+            <Text style={[styles.roleBadgeText,
+              { color: getRoleColor() }]}>
+              {getRoleBadge()}
+            </Text>
+          </View>
+
+          {/* MEMBER SINCE */}
+          <View style={styles.infoCard}>
+            <Text style={styles.infoLabel}>
+              MEMBER SINCE
+            </Text>
+            <Text style={styles.infoValue}>
+              🗓️ May 2025
+            </Text>
+            <Text style={styles.infoSub}>
+              ZAVARA Early Member 🌴
+            </Text>
+          </View>
+
+          {/* PLATFORM */}
+          <View style={styles.infoCard}>
+            <Text style={styles.infoLabel}>PLATFORM</Text>
+            <Text style={styles.infoValue}>
+              🌴 ZAVARA — The Island's Pulse
+            </Text>
+            <Text style={styles.infoSub}>
+              Version 1.0.0 · Bohol, Philippines
+            </Text>
+          </View>
+
+          {/* BUTTONS */}
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => setScreen('orders')}>
+            <Text style={styles.primaryButtonText}>
+              📦 MY ORDER HISTORY
+            </Text>
+          </TouchableOpacity>
+
           {userRole === 'regular' && (
             <TouchableOpacity
-              style={styles.verifyButton}
+              style={styles.outlineButton}
               onPress={() => setScreen('verify')}>
-              <Text style={styles.verifyButtonText}>
-                ✅ Apply for Verification
+              <Text style={styles.outlineButtonText}>
+                ✦ BECOME A VERIFIED PARTNER
               </Text>
             </TouchableOpacity>
           )}
+
           <TouchableOpacity
-            style={styles.logoutButton}
+            style={styles.dangerButton}
             onPress={handleLogout}>
-            <Text style={styles.logoutText}>Logout</Text>
+            <Text style={styles.dangerButtonText}>
+              LOGOUT
+            </Text>
           </TouchableOpacity>
+
         </ScrollView>
+        <BottomNav />
       </View>
     );
   }
 
-  // VERIFY SCREEN
+  // ============================================
+  // VERIFY
+  // ============================================
   if (screen === 'verify') {
     return (
       <View style={styles.container}>
-        <StatusBar backgroundColor={colors.primaryDark} barStyle="light-content" />
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('profile')}>
-            <Text style={styles.backBtn}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>✅ Get Verified</Text>
-        </View>
-        <ScrollView contentContainerStyle={styles.verifyContainer}>
-          <Text style={styles.verifyTitle}>Choose your role</Text>
-          <Text style={styles.verifySubtitle}>
-            Apply for a verified account to access more features
-          </Text>
-
+        <StatusBar
+          backgroundColor={colors.headerBg}
+          barStyle="dark-content"
+        />
+        <View style={styles.elegantHeader}>
           <TouchableOpacity
-            style={styles.verifyOption}
-            onPress={async () => {
-              try {
-                await axios.post(
-                  `${API_URL}/verify/apply?user_id=${userId}`,
-                  { requested_role: 'farmer', document_url: 'pending' },
-                  { headers: { 'Content-Type': 'application/json' } }
-                );
-                Alert.alert('Applied! 🎉', 'Farmer verification is being reviewed.');
-                setScreen('home');
-              } catch (error) {
-                Alert.alert('Error', 'Could not apply. Try again.');
-              }
-            }}>
-            <View style={styles.verifyOptionHeader}>
-              <Text style={styles.verifyOptionIcon}>👨‍🌾</Text>
-              <View>
-                <Text style={styles.verifyOptionTitle}>Farmer</Text>
-                <Text style={styles.verifyOptionDesc}>
-                  I grow crops or raise livestock
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.verifyArrow}>→</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.verifyOption}
-            onPress={async () => {
-              try {
-                await axios.post(
-                  `${API_URL}/verify/apply?user_id=${userId}`,
-                  { requested_role: 'vendor', document_url: 'pending' },
-                  { headers: { 'Content-Type': 'application/json' } }
-                );
-                Alert.alert('Applied! 🎉', 'Vendor verification is being reviewed.');
-                setScreen('home');
-              } catch (error) {
-                Alert.alert('Error', 'Could not apply. Try again.');
-              }
-            }}>
-            <View style={styles.verifyOptionHeader}>
-              <Text style={styles.verifyOptionIcon}>🏪</Text>
-              <View>
-                <Text style={styles.verifyOptionTitle}>Market Vendor</Text>
-                <Text style={styles.verifyOptionDesc}>
-                  I have a stall in the palengke
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.verifyArrow}>→</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.verifyOption}
-            onPress={async () => {
-              try {
-                await axios.post(
-                  `${API_URL}/verify/apply?user_id=${userId}`,
-                  { requested_role: 'rider', document_url: 'pending' },
-                  { headers: { 'Content-Type': 'application/json' } }
-                );
-                Alert.alert('Applied! 🎉', 'Rider verification is being reviewed.');
-                setScreen('home');
-              } catch (error) {
-                Alert.alert('Error', 'Could not apply. Try again.');
-              }
-            }}>
-            <View style={styles.verifyOptionHeader}>
-              <Text style={styles.verifyOptionIcon}>🏍️</Text>
-              <View>
-                <Text style={styles.verifyOptionTitle}>Rider</Text>
-                <Text style={styles.verifyOptionDesc}>
-                  I want to deliver orders
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.verifyArrow}>→</Text>
-          </TouchableOpacity>
-
-        </ScrollView>
-      </View>
-    );
-  }
-
-  // FARMER SCREENS
-  if (screen === 'my_products' || screen === 'add_product') {
-    return (
-      <View style={styles.container}>
-        <StatusBar backgroundColor={colors.farmerColor} barStyle="light-content" />
-        <View style={[styles.header, { backgroundColor: colors.farmerColor }]}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backBtn}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            {screen === 'my_products' ? '🌾 My Products' : '➕ Add Product'}
-          </Text>
-        </View>
-        <View style={styles.centerContent}>
-          <Text style={styles.comingSoonIcon}>🌾</Text>
-          <Text style={styles.comingSoonTitle}>Farmer Dashboard</Text>
-          <Text style={styles.comingSoonSub}>Coming Soon!</Text>
-        </View>
-      </View>
-    );
-  }
-
-  // VENDOR SCREENS
-  if (screen === 'wholesale' || screen === 'my_store') {
-    return (
-      <View style={styles.container}>
-        <StatusBar backgroundColor={colors.primaryDark} barStyle="light-content" />
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backBtn}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            {screen === 'wholesale' ? '🛒 Buy from Farmers' : '🏪 My Store'}
-          </Text>
-        </View>
-        <View style={styles.centerContent}>
-          <Text style={styles.comingSoonIcon}>🏪</Text>
-          <Text style={styles.comingSoonTitle}>Vendor Dashboard</Text>
-          <Text style={styles.comingSoonSub}>Coming Soon!</Text>
-        </View>
-      </View>
-    );
-  }
-
-  // HOME SCREEN
-  if (screen === 'home') {
-    return (
-      <View style={styles.container}>
-        <StatusBar backgroundColor={colors.primaryDark} barStyle="light-content" />
-
-        <View style={styles.homeHeader}>
-          <View>
-            <Text style={styles.homeGreeting}>Maayong Adlaw! 🌴</Text>
-            <Text style={styles.homeUserName}>{loggedInUser}</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.profileButton}
             onPress={() => setScreen('profile')}>
-            <Text style={styles.profileButtonText}>
-              {loggedInUser.charAt(0).toUpperCase()}
-            </Text>
+            <Text style={styles.headerBack}>←</Text>
           </TouchableOpacity>
+          <Text style={styles.headerTitleCenter}>
+            Become a Partner
+          </Text>
+          <View style={{ width: 30 }} />
         </View>
-
         <ScrollView
-          contentContainerStyle={styles.homeContent}
-          showsVerticalScrollIndicator={false}>
+          contentContainerStyle={styles.verifyContainer}>
+          <Text style={styles.verifyTitle}>
+            Choose Your Path
+          </Text>
+          <Text style={styles.verifySubtitle}>
+            Join the ZAVARA ecosystem and unlock exclusive
+            features for your business in Bohol 🌴
+          </Text>
 
-          <View style={styles.searchBar}>
-            <Text style={styles.searchIcon}>🔍</Text>
-            <Text style={styles.searchText}>
-              Search services, food, jobs...
-            </Text>
-          </View>
-
-          {userRole !== 'regular' && (
-            <View style={[
-              styles.homeBadge,
-              userRole === 'farmer' && { backgroundColor: colors.farmerColor },
-              userRole === 'vendor' && { backgroundColor: colors.vendorColor },
-              userRole === 'admin' && { backgroundColor: colors.adminColor },
-            ]}>
-              <Text style={styles.homeBadgeText}>
-                {userRole === 'farmer' ? '👨‍🌾 Verified Farmer' :
-                 userRole === 'vendor' ? '🏪 Verified Vendor' :
-                 userRole === 'admin' ? '⚙️ Admin' : ''}
+          <View style={styles.verifyNoteCard}>
+            <Text style={styles.verifyNoteIcon}>📋</Text>
+            <View style={styles.verifyNoteContent}>
+              <Text style={styles.verifyNoteTitle}>
+                REQUIREMENTS
+              </Text>
+              <Text style={styles.verifyNoteText}>
+                Valid ID + Business Documents required.
+                Review takes 1-4 hours.
               </Text>
             </View>
-          )}
-
-          <Text style={styles.sectionTitle}>Services</Text>
-          <View style={styles.servicesGrid}>
-            <TouchableOpacity
-              style={styles.serviceItem}
-              onPress={() => setScreen('restaurants')}>
-              <View style={[styles.serviceIconBg, { backgroundColor: '#FFF3E0' }]}>
-                <Text style={styles.serviceIcon}>🍔</Text>
-              </View>
-              <Text style={styles.serviceText}>Food</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.serviceItem}
-              onPress={() => setScreen('ride')}>
-              <View style={[styles.serviceIconBg, { backgroundColor: '#E3F2FD' }]}>
-                <Text style={styles.serviceIcon}>🚗</Text>
-              </View>
-              <Text style={styles.serviceText}>Ride</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.serviceItem}
-              onPress={() => setScreen('jobs')}>
-              <View style={[styles.serviceIconBg, { backgroundColor: '#F3E5F5' }]}>
-                <Text style={styles.serviceIcon}>💼</Text>
-              </View>
-              <Text style={styles.serviceText}>Jobs</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.serviceItem}
-              onPress={() => setScreen('sos')}>
-              <View style={[styles.serviceIconBg, { backgroundColor: '#FFEBEE' }]}>
-                <Text style={styles.serviceIcon}>🚨</Text>
-              </View>
-              <Text style={styles.serviceText}>SOS</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.serviceItem}>
-              <View style={[styles.serviceIconBg, { backgroundColor: '#E8F5E9' }]}>
-                <Text style={styles.serviceIcon}>💰</Text>
-              </View>
-              <Text style={styles.serviceText}>Pay</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.serviceItem}>
-              <View style={[styles.serviceIconBg, { backgroundColor: '#FFF9C4' }]}>
-                <Text style={styles.serviceIcon}>📦</Text>
-              </View>
-              <Text style={styles.serviceText}>Padala</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.serviceItem}>
-              <View style={[styles.serviceIconBg, { backgroundColor: '#FCE4EC' }]}>
-                <Text style={styles.serviceIcon}>🏥</Text>
-              </View>
-              <Text style={styles.serviceText}>Health</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.serviceItem}>
-              <View style={[styles.serviceIconBg, { backgroundColor: '#E0F7FA' }]}>
-                <Text style={styles.serviceIcon}>🏖️</Text>
-              </View>
-              <Text style={styles.serviceText}>Tourism</Text>
-            </TouchableOpacity>
           </View>
 
-          {(userRole === 'farmer' || userRole === 'admin') && (
-            <>
-              <Text style={styles.sectionTitle}>👨‍🌾 Farm</Text>
-              <View style={styles.quickGrid}>
-                <TouchableOpacity
-                  style={[styles.quickItem, { borderLeftColor: colors.farmerColor }]}
-                  onPress={() => setScreen('my_products')}>
-                  <Text style={styles.quickIcon}>🌾</Text>
-                  <View>
-                    <Text style={styles.quickTitle}>My Products</Text>
-                    <Text style={styles.quickSub}>Manage listings</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.quickItem, { borderLeftColor: colors.farmerColor }]}
-                  onPress={() => setScreen('add_product')}>
-                  <Text style={styles.quickIcon}>➕</Text>
-                  <View>
-                    <Text style={styles.quickTitle}>Add Product</Text>
-                    <Text style={styles.quickSub}>List new harvest</Text>
-                  </View>
-                </TouchableOpacity>
+          {[
+            {
+              role: 'producer', icon: '🌾',
+              title: 'Harvest Partner',
+              subtitle: 'Farmer · Fisherman · Livestock',
+              desc: 'Sell your harvest directly to buyers across Bohol',
+              color: colors.farmerColor,
+              bg: colors.farmerBg,
+              docs: 'Valid ID + Barangay Clearance + Farm Photo',
+              partner_type: 'farmer',
+            },
+            {
+              role: 'seller', icon: '🏪',
+              title: 'Market Seller',
+              subtitle: 'Palengke · Sari-sari · Cooperative',
+              desc: 'Buy wholesale from producers and sell to customers',
+              color: colors.vendorColor,
+              bg: colors.vendorBg,
+              docs: 'Valid ID + DTI/Business Permit + Stall Photo',
+              partner_type: 'market_vendor',
+            },
+            {
+              role: 'transport', icon: '🚐',
+              title: 'Swift Partner',
+              subtitle: 'Motorcycle · Van · Truck · Courier',
+              desc: 'Deliver orders and transport goods across Bohol',
+              color: colors.riderColor,
+              bg: colors.riderBg,
+              docs: "Valid ID + Driver's License + OR/CR",
+              partner_type: 'motorcycle_rider',
+            },
+            {
+              role: 'haven', icon: '🏨',
+              title: 'Haven Partner',
+              subtitle: 'Hotel · Resort · Pension · Homestay',
+              desc: 'List your property and attract tourists',
+              color: colors.havenColor,
+              bg: colors.havenBg,
+              docs: 'Valid ID + Business Permit + DOT Accreditation',
+              partner_type: 'hotel',
+            },
+            {
+              role: 'cuisine', icon: '🍴',
+              title: 'Cuisine Partner',
+              subtitle: 'Restaurant · Carinderia · Food Stall',
+              desc: 'Reach more customers with food delivery',
+              color: colors.cuisineColor,
+              bg: colors.cuisineBg,
+              docs: 'Valid ID + Business Permit + Sanitary Permit',
+              partner_type: 'restaurant',
+            },
+          ].map((item) => (
+            <TouchableOpacity
+              key={item.role}
+              style={[styles.verifyOption, {
+                borderLeftWidth: 4,
+                borderLeftColor: item.color,
+              }]}
+              onPress={async () => {
+                try {
+                  await axios.post(
+                    `${API_URL}/verify/apply` +
+                    `?user_id=${userId}` +
+                    `&requested_role=${item.role}` +
+                    `&partner_type=${item.partner_type}` +
+                    `&business_name=Pending` +
+                    `&description=Application via ZAVARA`,
+                    {},
+                    {
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
+                    }
+                  );
+                  showToast('success',
+                    'Application Submitted! ✅',
+                    `Your ${item.title} application is under review.`
+                  );
+                  setTimeout(() => setScreen('home'), 1500);
+                } catch (error) {
+                  if (error.response?.status === 400) {
+                    showToast('warning',
+                      'Already Applied ⚠️',
+                      'You have a pending application.'
+                    );
+                  } else {
+                    showToast('error', 'Error',
+                      'Could not apply. Try again.');
+                  }
+                }
+              }}>
+              <View style={[styles.verifyIconWrap,
+                { backgroundColor: item.bg }]}>
+                <Text style={styles.verifyOptionIcon}>
+                  {item.icon}
+                </Text>
               </View>
-            </>
-          )}
-
-          {(userRole === 'vendor' || userRole === 'admin') && (
-            <>
-              <Text style={styles.sectionTitle}>🏪 Store</Text>
-              <View style={styles.quickGrid}>
-                <TouchableOpacity
-                  style={[styles.quickItem, { borderLeftColor: colors.vendorColor }]}
-                  onPress={() => setScreen('wholesale')}>
-                  <Text style={styles.quickIcon}>🛒</Text>
-                  <View>
-                    <Text style={styles.quickTitle}>Wholesale</Text>
-                    <Text style={styles.quickSub}>Buy from farmers</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.quickItem, { borderLeftColor: colors.vendorColor }]}
-                  onPress={() => setScreen('my_store')}>
-                  <Text style={styles.quickIcon}>🏪</Text>
-                  <View>
-                    <Text style={styles.quickTitle}>My Store</Text>
-                    <Text style={styles.quickSub}>Manage products</Text>
-                  </View>
-                </TouchableOpacity>
+              <View style={styles.verifyOptionContent}>
+                <Text style={[styles.verifyOptionTitle,
+                  { color: item.color }]}>
+                  {item.title}
+                </Text>
+                <Text style={styles.verifyOptionSubtitle}>
+                  {item.subtitle}
+                </Text>
+                <Text style={styles.verifyOptionDesc}>
+                  {item.desc}
+                </Text>
+                <View style={[styles.verifyDocsBadge,
+                  { backgroundColor: item.bg }]}>
+                  <Text style={[styles.verifyDocsText,
+                    { color: item.color }]}>
+                    📎 {item.docs}
+                  </Text>
+                </View>
               </View>
-            </>
-          )}
+              <Text style={[styles.verifyArrow,
+                { color: item.color }]}>→</Text>
+            </TouchableOpacity>
+          ))}
 
-          <View style={styles.promoBanner}>
-            <Text style={styles.promoTitle}>🌴 Welcome to OneBohol!</Text>
-            <Text style={styles.promoText}>
-              Order food, book rides, find jobs and more.
-              All in one app for Bohol!
+          <View style={styles.verifyFooterNote}>
+            <Text style={styles.verifyFooterText}>
+              🔒 All applications are manually reviewed
+              by ZAVARA Overseers for safety and integrity.
             </Text>
           </View>
-
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.quickGrid}>
-            <TouchableOpacity style={styles.quickItem}>
-              <Text style={styles.quickIcon}>📋</Text>
-              <View>
-                <Text style={styles.quickTitle}>My Orders</Text>
-                <Text style={styles.quickSub}>Track your orders</Text>
-              </View>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.quickItem}
-              onPress={() => setScreen('profile')}>
-              <Text style={styles.quickIcon}>⚙️</Text>
-              <View>
-                <Text style={styles.quickTitle}>Settings</Text>
-                <Text style={styles.quickSub}>Account & preferences</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-
-          {userRole === 'regular' && (
-            <TouchableOpacity
-              style={styles.verifySmall}
-              onPress={() => setScreen('verify')}>
-              <Text style={styles.verifySmallText}>
-                ✅ Get Verified for more features
-              </Text>
-              <Text style={styles.verifySmallArrow}>→</Text>
-            </TouchableOpacity>
-          )}
-
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>🌴 OneBohol v2.0</Text>
-            <Text style={styles.footerSubText}>Made with love for Bohol</Text>
-          </View>
-
         </ScrollView>
       </View>
     );
   }
 
-  // REGISTER SCREEN
+  // ============================================
+  // REGISTER
+  // ============================================
   if (screen === 'register') {
     return (
       <KeyboardAvoidingView
         style={styles.authContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <StatusBar backgroundColor={colors.primaryDark} barStyle="light-content" />
+        behavior={
+          Platform.OS === 'ios' ? 'padding' : undefined
+        }>
+        <StatusBar
+          backgroundColor={colors.backgroundWarm}
+          barStyle="dark-content"
+        />
         <ScrollView
           contentContainerStyle={styles.authScroll}
           keyboardShouldPersistTaps="handled">
-          <View style={styles.authTop}>
-            <Text style={styles.authLogo}>🌴</Text>
-            <Text style={styles.authAppName}>OneBohol</Text>
-            <Text style={styles.authTagline}>Create your account</Text>
+
+          <View style={styles.authHeader}>
+            <Text style={styles.authBrand}>ZAVARA</Text>
+            <View style={styles.authDecoLine} />
+            <Text style={styles.authTagline}>
+              CREATE YOUR ACCOUNT
+            </Text>
           </View>
-          <View style={styles.authForm}>
-            <Text style={styles.inputLabel}>Full Name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Juan dela Cruz"
-              placeholderTextColor={colors.textLight}
-              value={name}
-              onChangeText={setName}
-            />
-            <Text style={styles.inputLabel}>Email</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="juan@email.com"
-              placeholderTextColor={colors.textLight}
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            <Text style={styles.inputLabel}>Phone Number</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="09xxxxxxxxx"
-              placeholderTextColor={colors.textLight}
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-            />
-            <Text style={styles.inputLabel}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="••••••••"
-              placeholderTextColor={colors.textLight}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
+
+          <View style={styles.authCard}>
+            <Text style={styles.authCardTitle}>
+              Create Account
+            </Text>
+            <Text style={styles.authCardSub}>
+              Join the ZAVARA community
+            </Text>
+
+            <Text style={styles.inputLabel}>
+              FULL NAME
+            </Text>
+            <View style={styles.inputWrap}>
+              <Text style={styles.inputIcon}>👤</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Juan dela Cruz"
+                placeholderTextColor={colors.textMuted}
+                value={name}
+                onChangeText={setName}
+              />
+            </View>
+
+            <Text style={styles.inputLabel}>
+              EMAIL ADDRESS
+            </Text>
+            <View style={styles.inputWrap}>
+              <Text style={styles.inputIcon}>✉️</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="juan@email.com"
+                placeholderTextColor={colors.textMuted}
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+            </View>
+
+            <Text style={styles.inputLabel}>
+              PHONE NUMBER
+            </Text>
+            <View style={styles.inputWrap}>
+              <Text style={styles.inputIcon}>📱</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="09xxxxxxxxx"
+                placeholderTextColor={colors.textMuted}
+                value={phone}
+                onChangeText={setPhone}
+                keyboardType="phone-pad"
+              />
+            </View>
+
+            <Text style={styles.inputLabel}>
+              PASSWORD
+            </Text>
+            <View style={styles.inputWrap}>
+              <Text style={styles.inputIcon}>🔒</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Create a strong password"
+                placeholderTextColor={colors.textMuted}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+              />
+            </View>
+
             {loading ? (
               <ActivityIndicator
                 size="large"
@@ -757,57 +1117,546 @@ const prepareApp = async () => {
               <TouchableOpacity
                 style={styles.authButton}
                 onPress={handleRegister}>
-                <Text style={styles.authButtonText}>CREATE ACCOUNT</Text>
+                <Text style={styles.authButtonText}>
+                  CREATE ACCOUNT
+                </Text>
               </TouchableOpacity>
             )}
+
             <TouchableOpacity
-              style={styles.switchAuth}
+              style={styles.switchAuthBtn}
               onPress={() => setScreen('login')}>
               <Text style={styles.switchAuthText}>
                 Already have an account?{' '}
-                <Text style={styles.switchAuthLink}>Login here</Text>
+                <Text style={styles.switchAuthLink}>
+                  Login here
+                </Text>
               </Text>
             </TouchableOpacity>
           </View>
+
+          <Text style={styles.authFooterText}>
+            Built with pride in Bohol 🌴
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     );
   }
 
-  // LOGIN SCREEN
+  // ============================================
+  // HOME
+  // ============================================
+  if (screen === 'home') {
+    return (
+      <View style={styles.container}>
+        <StatusBar
+          backgroundColor={colors.headerBg}
+          barStyle="dark-content"
+        />
+
+        {/* HOME HEADER */}
+        <View style={styles.homeHeader}>
+          <View>
+            <Text style={styles.homeBrand}>ZAVARA</Text>
+            <Text style={styles.homeWelcome}>
+              {getGreeting()}, {loggedInUser}{' '}
+              {getGreetingEmoji()}
+            </Text>
+          </View>
+          <View style={styles.homeHeaderRight}>
+            <TouchableOpacity
+              style={styles.notifBtn}
+              onPress={() => setScreen('orders')}>
+              <Text style={styles.notifIcon}>🔔</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.homeAvatar}
+              onPress={() => setScreen('profile')}>
+              {profileImage ? (
+                <Image
+                  source={{ uri: profileImage }}
+                  style={styles.homeAvatarImg}
+                />
+              ) : (
+                <Text style={styles.homeAvatarText}>
+                  {loggedInUser.charAt(0).toUpperCase()}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* SEARCH BAR */}
+        <View style={styles.searchWrap}>
+          <View style={styles.searchBar}>
+            <Text style={styles.searchIcon}>🔍</Text>
+            <Text style={styles.searchPlaceholder}>
+              Search food, services, stores...
+            </Text>
+          </View>
+        </View>
+
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 90 }}>
+
+          {/* ROLE BANNER */}
+          {userRole !== 'regular' && (
+            <View style={[styles.roleBannerHome, {
+              borderColor: getRoleColor() + '20',
+              backgroundColor: getRoleBg(),
+            }]}>
+              <Text style={[styles.roleBannerHomeText,
+                { color: getRoleColor() }]}>
+                {getRoleBanner()}
+              </Text>
+            </View>
+          )}
+
+          {/* FEATURED */}
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionLabel}>
+              FEATURED
+            </Text>
+            <Text style={styles.sectionSub}>
+              Exclusive deals
+            </Text>
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={
+              styles.carouselContent
+            }>
+
+            <TouchableOpacity
+              style={[styles.promoCard, {
+                backgroundColor: colors.coralPale,
+                borderColor: colors.coral + '20',
+              }]}
+              onPress={() => setScreen('restaurants')}>
+              <View style={styles.promoCardInner}>
+                <Text style={[styles.promoTag,
+                  { color: colors.coral }]}>
+                  ✦ LIMITED
+                </Text>
+                <Text style={[styles.promoTitle,
+                  { color: colors.textDark }]}>
+                  FIRST ORDER
+                </Text>
+                <Text style={styles.promoDesc}>
+                  50% off your first{'\n'}meal delivery
+                </Text>
+              </View>
+              <View style={styles.promoCardRight}>
+                <Text style={styles.promoEmoji}>🍔</Text>
+                <View style={[styles.promoCTA,
+                  { backgroundColor: colors.coral }]}>
+                  <Text style={[styles.promoCTAText,
+                    { color: '#FFF' }]}>
+                    Order →
+                  </Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+
+            {(userRole === 'producer' ||
+              userRole === 'seller' ||
+              userRole === 'admin') && (
+              <TouchableOpacity
+                style={[styles.promoCard, {
+                  backgroundColor: colors.farmerBg,
+                  borderColor: colors.farmerColor + '20',
+                }]}>
+                <View style={styles.promoCardInner}>
+                  <Text style={[styles.promoTag,
+                    { color: colors.farmerColor }]}>
+                    ✦ WHOLESALE
+                  </Text>
+                  <Text style={[styles.promoTitle,
+                    { color: colors.textDark }]}>
+                    FARM TO TABLE
+                  </Text>
+                  <Text style={styles.promoDesc}>
+                    Direct from local{'\n'}Bohol producers
+                  </Text>
+                </View>
+                <View style={styles.promoCardRight}>
+                  <Text style={styles.promoEmoji}>🌾</Text>
+                  <View style={[styles.promoCTA, {
+                    backgroundColor: colors.farmerColor,
+                  }]}>
+                    <Text style={[styles.promoCTAText,
+                      { color: '#FFF' }]}>
+                      Browse →
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[styles.promoCard, {
+                backgroundColor: colors.riderBg,
+                borderColor: colors.riderColor + '20',
+              }]}>
+              <View style={styles.promoCardInner}>
+                <Text style={[styles.promoTag,
+                  { color: colors.riderColor }]}>
+                  ✦ COMING SOON
+                </Text>
+                <Text style={[styles.promoTitle,
+                  { color: colors.textDark }]}>
+                  SWIFT RIDES
+                </Text>
+                <Text style={styles.promoDesc}>
+                  Book a ride{'\n'}anywhere in Bohol
+                </Text>
+              </View>
+              <View style={styles.promoCardRight}>
+                <Text style={styles.promoEmoji}>🏍️</Text>
+                <View style={[styles.promoCTA, {
+                  backgroundColor: colors.riderColor,
+                }]}>
+                  <Text style={[styles.promoCTAText,
+                    { color: '#FFF' }]}>
+                    Soon →
+                  </Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+
+          </ScrollView>
+
+          {/* SERVICES */}
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionLabel}>
+              SERVICES
+            </Text>
+            <Text style={styles.sectionSub}>
+              What do you need today?
+            </Text>
+          </View>
+
+          <View style={styles.servicesRow}>
+            <TouchableOpacity
+              style={styles.serviceTileLarge}
+              onPress={() => setScreen('restaurants')}>
+              <View style={[styles.serviceIconWrap,
+                { backgroundColor: colors.cuisineBg }]}>
+                <Text style={styles.serviceIcon}>🍴</Text>
+              </View>
+              <Text style={styles.serviceTitle}>
+                Cuisine
+              </Text>
+              <Text style={styles.serviceDesc}>
+                Order & Delivery
+              </Text>
+              <View style={styles.availableBadge}>
+                <Text style={styles.availableBadgeText}>
+                  AVAILABLE
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.serviceTileLarge}
+              onPress={() => setScreen('ride')}>
+              <View style={[styles.serviceIconWrap,
+                { backgroundColor: colors.riderBg }]}>
+                <Text style={styles.serviceIcon}>🚐</Text>
+              </View>
+              <Text style={styles.serviceTitle}>
+                Transport
+              </Text>
+              <Text style={styles.serviceDesc}>
+                Book a ride
+              </Text>
+              <View style={styles.soonBadge}>
+                <Text style={styles.soonBadgeText}>
+                  SOON
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.servicesRow}>
+            <TouchableOpacity
+              style={styles.serviceTileSmall}
+              onPress={() => setScreen('jobs')}>
+              <Text style={styles.serviceTileSmIcon}>
+                💼
+              </Text>
+              <View>
+                <Text style={styles.serviceTileSmTitle}>
+                  Careers
+                </Text>
+                <Text style={styles.serviceTileSmDesc}>
+                  Find work
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.serviceTileSmall}
+              onPress={() => setScreen('sos')}>
+              <Text style={styles.serviceTileSmIcon}>
+                🛡️
+              </Text>
+              <View>
+                <Text style={styles.serviceTileSmTitle}>
+                  Safety
+                </Text>
+                <Text style={styles.serviceTileSmDesc}>
+                  SOS & Help
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          {/* LIFESTYLE */}
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionLabel}>
+              LIFESTYLE
+            </Text>
+            <Text style={styles.sectionSub}>
+              More coming soon 🔥
+            </Text>
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={
+              styles.lifestyleScroll
+            }>
+            {[
+              { icon: '📦', label: 'Padala'  },
+              { icon: '🏥', label: 'Health'  },
+              { icon: '🏖️', label: 'Tourism' },
+              { icon: '💡', label: 'Bills'   },
+              { icon: '⛽', label: 'Fuel'    },
+            ].map((item) => (
+              <TouchableOpacity
+                key={item.label}
+                style={styles.lifestyleChip}>
+                <Text style={styles.lifestyleChipIcon}>
+                  {item.icon}
+                </Text>
+                <Text style={styles.lifestyleChipLabel}>
+                  {item.label}
+                </Text>
+                <View style={styles.lifestyleSoonBadge}>
+                  <Text style={styles.lifestyleSoonText}>
+                    Soon
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {/* PRODUCER DASHBOARD */}
+          {(userRole === 'producer' ||
+            userRole === 'admin') && (
+            <View>
+              <View style={styles.sectionHeader}>
+                <Text style={[styles.sectionLabel,
+                  { color: colors.farmerColor }]}>
+                  🌾 HARVEST DASHBOARD
+                </Text>
+                <Text style={styles.sectionSub}>
+                  Manage your products
+                </Text>
+              </View>
+              <View style={styles.dashRow}>
+                <TouchableOpacity
+                  style={[styles.dashCard, {
+                    borderTopColor: colors.farmerColor,
+                  }]}
+                  onPress={() =>
+                    setScreen('my_products')}>
+                  <Text style={styles.dashIcon}>🌾</Text>
+                  <Text style={styles.dashTitle}>
+                    My Products
+                  </Text>
+                  <Text style={styles.dashSub}>
+                    Manage listings
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.dashCard, {
+                    borderTopColor: colors.farmerColor,
+                  }]}
+                  onPress={() =>
+                    setScreen('add_product')}>
+                  <Text style={styles.dashIcon}>➕</Text>
+                  <Text style={styles.dashTitle}>
+                    Add Product
+                  </Text>
+                  <Text style={styles.dashSub}>
+                    List new harvest
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* SELLER DASHBOARD */}
+          {(userRole === 'seller' ||
+            userRole === 'admin') && (
+            <View>
+              <View style={styles.sectionHeader}>
+                <Text style={[styles.sectionLabel,
+                  { color: colors.vendorColor }]}>
+                  🏪 SELLER DASHBOARD
+                </Text>
+                <Text style={styles.sectionSub}>
+                  Buy wholesale & manage store
+                </Text>
+              </View>
+              <View style={styles.dashRow}>
+                <TouchableOpacity
+                  style={[styles.dashCard, {
+                    borderTopColor: colors.vendorColor,
+                  }]}
+                  onPress={() =>
+                    setScreen('wholesale')}>
+                  <Text style={styles.dashIcon}>🛒</Text>
+                  <Text style={styles.dashTitle}>
+                    Wholesale
+                  </Text>
+                  <Text style={styles.dashSub}>
+                    Buy from producers
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.dashCard, {
+                    borderTopColor: colors.vendorColor,
+                  }]}
+                  onPress={() =>
+                    setScreen('my_store')}>
+                  <Text style={styles.dashIcon}>🏪</Text>
+                  <Text style={styles.dashTitle}>
+                    My Store
+                  </Text>
+                  <Text style={styles.dashSub}>
+                    Manage products
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* PARTNER BANNER */}
+          {userRole === 'regular' && (
+            <TouchableOpacity
+              style={styles.partnerBanner}
+              onPress={() => setScreen('verify')}>
+              <View style={styles.partnerBannerLeft}>
+                <Text style={styles.partnerBannerIcon}>
+                  🌴
+                </Text>
+                <View>
+                  <Text style={styles.partnerBannerTitle}>
+                    BECOME A PARTNER
+                  </Text>
+                  <Text style={styles.partnerBannerSub}>
+                    Harvest · Seller · Swift · Haven
+                  </Text>
+                </View>
+              </View>
+              <View style={
+                styles.partnerBannerArrowWrap}>
+                <Text style={styles.partnerBannerArrow}>
+                  →
+                </Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {/* FOOTER */}
+          <View style={styles.homeFooter}>
+            <View style={styles.homeFooterLine} />
+            <Text style={styles.homeFooterBrand}>
+              ZAVARA
+            </Text>
+            <Text style={styles.homeFooterSub}>
+              Built with pride in Bohol 🌴
+            </Text>
+            <Text style={styles.homeFooterVersion}>
+              v2.0.0
+            </Text>
+          </View>
+
+        </ScrollView>
+        <BottomNav />
+      </View>
+    );
+  }
+
+  // ============================================
+  // LOGIN (DEFAULT)
+  // ============================================
   return (
     <KeyboardAvoidingView
       style={styles.authContainer}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <StatusBar backgroundColor={colors.primaryDark} barStyle="light-content" />
+      behavior={
+        Platform.OS === 'ios' ? 'padding' : undefined
+      }>
+      <StatusBar
+        backgroundColor={colors.backgroundWarm}
+        barStyle="dark-content"
+      />
       <ScrollView
         contentContainerStyle={styles.authScroll}
         keyboardShouldPersistTaps="handled">
-        <View style={styles.authTop}>
-          <Text style={styles.authLogo}>🌴</Text>
-          <Text style={styles.authAppName}>OneBohol</Text>
-          <Text style={styles.authTagline}>Connecting Bohol</Text>
+
+        <View style={styles.authHeader}>
+          <Text style={styles.authBrand}>ZAVARA</Text>
+          <View style={styles.authDecoLine} />
+          <Text style={styles.authTagline}>
+            THE ISLAND'S PULSE
+          </Text>
         </View>
-        <View style={styles.authForm}>
-          <Text style={styles.inputLabel}>Email</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="juan@email.com"
-            placeholderTextColor={colors.textLight}
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-          <Text style={styles.inputLabel}>Password</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="••••••••"
-            placeholderTextColor={colors.textLight}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
+
+        <View style={styles.authCard}>
+          <Text style={styles.authCardTitle}>
+            Welcome Back
+          </Text>
+          <Text style={styles.authCardSub}>
+            Login to your account
+          </Text>
+
+          <Text style={styles.inputLabel}>
+            EMAIL ADDRESS
+          </Text>
+          <View style={styles.inputWrap}>
+            <Text style={styles.inputIcon}>✉️</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="juan@email.com"
+              placeholderTextColor={colors.textMuted}
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          </View>
+
+          <Text style={styles.inputLabel}>PASSWORD</Text>
+          <View style={styles.inputWrap}>
+            <Text style={styles.inputIcon}>🔒</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter your password"
+              placeholderTextColor={colors.textMuted}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
+          </View>
+
           {loading ? (
             <ActivityIndicator
               size="large"
@@ -818,483 +1667,919 @@ const prepareApp = async () => {
             <TouchableOpacity
               style={styles.authButton}
               onPress={handleLogin}>
-              <Text style={styles.authButtonText}>LOGIN</Text>
+              <Text style={styles.authButtonText}>
+                LOGIN
+              </Text>
             </TouchableOpacity>
           )}
+
           <TouchableOpacity
-            style={styles.switchAuth}
+            style={styles.switchAuthBtn}
             onPress={() => setScreen('register')}>
             <Text style={styles.switchAuthText}>
-              Don't have an account?{' '}
-              <Text style={styles.switchAuthLink}>Register here</Text>
+              New to ZAVARA?{' '}
+              <Text style={styles.switchAuthLink}>
+                Create account
+              </Text>
             </Text>
           </TouchableOpacity>
         </View>
-        <Text style={styles.authFooter}>
-          🌴 Made with love for Bohol
+
+        <Text style={styles.authFooterText}>
+          Built with pride in Bohol 🌴
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
+// ============================================
+// MAIN EXPORT
+// ============================================
+export default function App() {
+  return (
+    <ToastProvider>
+      <AppContent />
+    </ToastProvider>
+  );
+}
+
+// ============================================
+// STYLES
+// ============================================
 const styles = StyleSheet.create({
+
   container: {
     flex: 1,
-    backgroundColor: colors.background
+    backgroundColor: colors.background,
   },
-  header: {
-    backgroundColor: colors.primaryDark,
+
+  // ── ELEGANT HEADER ────────────────────────
+  elegantHeader: {
+    backgroundColor: colors.headerBg,
     paddingTop: 50,
-    paddingBottom: 15,
-    paddingHorizontal: 20
+    paddingBottom: 14,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.headerBorder,
+    ...shadow,
   },
-  headerTitle: {
-    color: colors.textWhite,
-    fontSize: fonts.xlarge,
-    fontWeight: 'bold'
+  headerBack: {
+    color: colors.primary,
+    fontSize: 22,
+    fontWeight: '600',
+    width: 30,
   },
-  backBtn: {
-    color: colors.primaryLight,
-    fontSize: fonts.medium,
-    marginBottom: 5
+  headerTitleCenter: {
+    color: colors.textDark,
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
+
+  // ── CENTER CONTENT ────────────────────────
   centerContent: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    padding: 30,
   },
-  comingSoonIcon: {
-    fontSize: 70,
-    marginBottom: 15
+  comingSoonCircle: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+    ...shadow,
   },
+  comingSoonIcon: { fontSize: 48 },
   comingSoonTitle: {
-    fontSize: fonts.xxlarge,
-    fontWeight: 'bold',
-    color: colors.textDark
+    fontSize: 24,
+    fontWeight: '900',
+    color: colors.textDark,
+    marginBottom: 8,
   },
   comingSoonSub: {
-    fontSize: fonts.medium,
-    color: colors.textLight,
-    marginTop: 8
+    fontSize: 10,
+    color: colors.textMuted,
+    letterSpacing: 4,
+    marginBottom: 24,
   },
+  comingSoonBadge: {
+    backgroundColor: colors.primaryPale,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: borderRadius.round,
+    borderWidth: 1,
+    borderColor: colors.borderGold,
+  },
+  comingSoonBadgeText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  // ── HOME HEADER ───────────────────────────
   homeHeader: {
-    backgroundColor: colors.primaryDark,
+    backgroundColor: colors.headerBg,
     paddingTop: 50,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
+    paddingBottom: 14,
+    paddingHorizontal: 22,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.headerBorder,
+    ...shadow,
   },
-  homeGreeting: {
-    color: colors.primaryLight,
-    fontSize: fonts.regular,
-    marginBottom: 2
+  homeBrand: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: colors.primary,
+    letterSpacing: 6,
   },
-  homeUserName: {
-    color: colors.textWhite,
-    fontSize: fonts.xlarge,
-    fontWeight: 'bold'
+  homeWelcome: {
+    color: colors.textLight,
+    fontSize: 12,
+    marginTop: 2,
   },
-  profileButton: {
-    width: 45,
-    height: 45,
-    borderRadius: 23,
+  homeHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  notifBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: colors.primaryPale,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderGold,
+  },
+  notifIcon: { fontSize: 18 },
+  homeAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: colors.primaryLight
+    overflow: 'hidden',
+    ...shadowGold,
   },
-  profileButtonText: {
+  homeAvatarImg: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+  },
+  homeAvatarText: {
     color: colors.textWhite,
-    fontSize: fonts.large,
-    fontWeight: 'bold'
+    fontWeight: '900',
+    fontSize: 18,
   },
-  homeContent: {
-    padding: 20,
-    paddingBottom: 40
-  },
-  homeBadge: {
-    backgroundColor: colors.primary,
-    padding: 10,
-    borderRadius: borderRadius.medium,
-    marginBottom: 15,
-    alignItems: 'center'
-  },
-  homeBadgeText: {
-    color: colors.textWhite,
-    fontWeight: 'bold',
-    fontSize: fonts.regular
-  },
-  sectionTitle: {
-    fontSize: fonts.medium,
-    fontWeight: 'bold',
-    color: colors.textDark,
-    marginBottom: 12,
-    marginTop: 5
+
+  // ── SEARCH ────────────────────────────────
+  searchWrap: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: colors.headerBg,
   },
   searchBar: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: borderRadius.xlarge,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: colors.border
-  },
-  searchIcon: {
-    fontSize: 18,
-    marginRight: 10
-  },
-  searchText: {
-    color: colors.textLight,
-    fontSize: fonts.regular
-  },
-  servicesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: 15
-  },
-  serviceItem: {
-    width: '23%',
-    alignItems: 'center',
-    marginBottom: 15
-  },
-  serviceIconBg: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-    ...shadow
-  },
-  serviceIcon: {
-    fontSize: 24
-  },
-  serviceText: {
-    fontSize: fonts.small,
-    fontWeight: '600',
-    color: colors.textDark,
-    textAlign: 'center'
-  },
-  quickGrid: {
-    marginBottom: 15
-  },
-  quickItem: {
-    backgroundColor: colors.cardBackground,
-    padding: 15,
-    borderRadius: borderRadius.medium,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.primary,
-    ...shadow
-  },
-  quickIcon: {
-    fontSize: 28,
-    marginRight: 15
-  },
-  quickTitle: {
-    fontSize: fonts.regular,
-    fontWeight: 'bold',
-    color: colors.textDark
-  },
-  quickSub: {
-    fontSize: fonts.small,
-    color: colors.textLight,
-    marginTop: 2
-  },
-  promoBanner: {
-    backgroundColor: colors.primaryDark,
+    backgroundColor: colors.inputBackground,
     borderRadius: borderRadius.large,
-    padding: 20,
-    marginBottom: 20,
-    ...shadow
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 10,
+  },
+  searchIcon: { fontSize: 16 },
+  searchPlaceholder: {
+    color: colors.textMuted,
+    fontSize: 13,
+    flex: 1,
+  },
+
+  // ── ROLE BANNER ───────────────────────────
+  roleBannerHome: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: borderRadius.large,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  roleBannerHomeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+
+  // ── SECTION HEADER ────────────────────────
+  sectionHeader: {
+    paddingHorizontal: 20,
+    marginBottom: 14,
+    marginTop: 12,
+  },
+  sectionLabel: {
+    color: colors.textDark,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+  sectionSub: {
+    color: colors.textLight,
+    fontSize: 11,
+    marginTop: 3,
+  },
+
+  // ── PROMO CARDS ───────────────────────────
+  carouselContent: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  promoCard: {
+    width: 260,
+    height: 145,
+    borderRadius: borderRadius.xxlarge,
+    padding: 18,
+    marginRight: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    ...shadowMd,
+  },
+  promoCardInner: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  promoCardRight: {
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingLeft: 10,
+  },
+  promoEmoji: { fontSize: 40, marginBottom: 8 },
+  promoTag: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 2,
   },
   promoTitle: {
-    color: colors.primaryLight,
-    fontSize: fonts.large,
-    fontWeight: 'bold',
-    marginBottom: 5
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
-  promoText: {
-    color: colors.textWhite,
-    fontSize: fonts.small,
-    lineHeight: 20,
-    opacity: 0.9
+  promoDesc: {
+    color: colors.textLight,
+    fontSize: 11,
+    lineHeight: 16,
   },
-  verifySmall: {
-    backgroundColor: colors.inputBackground,
-    padding: 14,
-    borderRadius: borderRadius.medium,
+  promoCTA: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: borderRadius.round,
+    ...shadow,
+  },
+  promoCTAText: {
+    fontSize: 10,
+    fontWeight: '900',
+  },
+
+  // ── SERVICES ──────────────────────────────
+  servicesRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    gap: 12,
+    marginBottom: 12,
+  },
+  serviceTileLarge: {
+    flex: 1,
+    backgroundColor: colors.cardBackground,
+    borderRadius: borderRadius.xlarge,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadowMd,
+  },
+  serviceIconWrap: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  serviceIcon: { fontSize: 28 },
+  serviceTitle: {
+    color: colors.textDark,
+    fontSize: 16,
+    fontWeight: '900',
+    marginBottom: 3,
+  },
+  serviceDesc: {
+    color: colors.textLight,
+    fontSize: 11,
+    marginBottom: 12,
+  },
+  availableBadge: {
+    backgroundColor: colors.successPale,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: borderRadius.round,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.success + '25',
+  },
+  availableBadgeText: {
+    color: colors.success,
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  soonBadge: {
+    backgroundColor: colors.warningPale,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: borderRadius.round,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.warning + '25',
+  },
+  soonBadgeText: {
+    color: colors.warning,
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  serviceTileSmall: {
+    flex: 1,
+    backgroundColor: colors.cardBackground,
+    borderRadius: borderRadius.xlarge,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    ...shadow,
+  },
+  serviceTileSmIcon: { fontSize: 28 },
+  serviceTileSmTitle: {
+    color: colors.textDark,
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  serviceTileSmDesc: {
+    color: colors.textLight,
+    fontSize: 10,
+  },
+
+  // ── LIFESTYLE ─────────────────────────────
+  lifestyleScroll: {
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+  },
+  lifestyleChip: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: borderRadius.large,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginRight: 10,
+    alignItems: 'center',
+    minWidth: 72,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow,
+  },
+  lifestyleChipIcon: { fontSize: 24, marginBottom: 6 },
+  lifestyleChipLabel: {
+    color: colors.textMedium,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  lifestyleSoonBadge: {
+    backgroundColor: colors.primaryPale,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: colors.borderGold,
+  },
+  lifestyleSoonText: {
+    color: colors.primary,
+    fontSize: 8,
+    fontWeight: '900',
+  },
+
+  // ── DASHBOARD ─────────────────────────────
+  dashRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+    marginBottom: 22,
+    gap: 12,
+  },
+  dashCard: {
+    flex: 1,
+    backgroundColor: colors.cardBackground,
+    borderRadius: borderRadius.xlarge,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderTopWidth: 3,
+    ...shadowMd,
+  },
+  dashIcon: { fontSize: 30, marginBottom: 12 },
+  dashTitle: {
+    color: colors.textDark,
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  dashSub: { color: colors.textLight, fontSize: 11 },
+
+  // ── PARTNER BANNER ────────────────────────
+  partnerBanner: {
+    backgroundColor: colors.primaryPale,
+    marginHorizontal: 20,
+    borderRadius: borderRadius.xlarge,
+    padding: 20,
+    marginBottom: 20,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15,
     borderWidth: 1,
-    borderColor: colors.border
+    borderColor: colors.borderGold,
+    ...shadow,
   },
-  verifySmallText: {
-    color: colors.primary,
-    fontSize: fonts.regular,
-    fontWeight: '600'
-  },
-  verifySmallArrow: {
-    color: colors.primary,
-    fontSize: fonts.large,
-    fontWeight: 'bold'
-  },
-  footer: {
+  partnerBannerLeft: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 20
+    gap: 14,
+    flex: 1,
   },
-  footerText: {
-    color: colors.textMedium,
-    fontSize: fonts.regular,
-    fontWeight: '600'
+  partnerBannerIcon: { fontSize: 30 },
+  partnerBannerTitle: {
+    color: colors.primary,
+    fontWeight: '900',
+    fontSize: 12,
+    letterSpacing: 1,
+    marginBottom: 3,
   },
-  footerSubText: {
+  partnerBannerSub: {
     color: colors.textLight,
-    fontSize: fonts.small,
-    marginTop: 3
+    fontSize: 10,
   },
-  logoutButton: {
-    backgroundColor: colors.danger,
-    padding: 15,
-    borderRadius: borderRadius.large,
+  partnerBannerArrowWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.primary,
     alignItems: 'center',
-    marginTop: 10
+    justifyContent: 'center',
+    ...shadowGold,
   },
-  logoutText: {
+  partnerBannerArrow: {
     color: colors.textWhite,
-    fontWeight: 'bold',
-    fontSize: fonts.medium
+    fontSize: 16,
+    fontWeight: '900',
   },
-  locationBadge: {
-    backgroundColor: colors.inputBackground,
-    padding: 10,
-    borderRadius: borderRadius.medium,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: colors.border
+
+  // ── HOME FOOTER ───────────────────────────
+  homeFooter: {
+    alignItems: 'center',
+    paddingVertical: 28,
   },
-  locationText: {
-    color: colors.textMedium,
-    fontSize: fonts.small
+  homeFooterLine: {
+    width: 40,
+    height: 1,
+    backgroundColor: colors.border,
+    marginBottom: 16,
   },
+  homeFooterBrand: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 5,
+  },
+  homeFooterSub: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 6,
+  },
+  homeFooterVersion: {
+    color: colors.borderMedium,
+    fontSize: 9,
+    marginTop: 4,
+    letterSpacing: 2,
+  },
+
+  // ── BOTTOM NAV ────────────────────────────
+  bottomNav: {
+    position: 'absolute',
+    bottom: 0,
+    width: '100%',
+    height: 66,
+    backgroundColor: colors.navBg,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: colors.navBorder,
+    ...shadowMd,
+  },
+  navItem: {
+    alignItems: 'center',
+    flex: 1,
+    paddingVertical: 6,
+  },
+  navIcon: { fontSize: 20, marginBottom: 3 },
+  navIconActive: { fontSize: 22 },
+  navLabel: {
+    fontSize: 9,
+    color: colors.navInactive,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  navLabelActive: {
+    fontSize: 9,
+    color: colors.navActive,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+  },
+  navDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.primary,
+    marginTop: 3,
+  },
+
+  // ── AUTH ──────────────────────────────────
   authContainer: {
     flex: 1,
-    backgroundColor: colors.background
+    backgroundColor: colors.backgroundWarm,
   },
   authScroll: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 25
+    padding: 28,
   },
-  authTop: {
+  authHeader: {
     alignItems: 'center',
-    marginBottom: 35
+    marginBottom: 36,
   },
-  authLogo: {
-    fontSize: 70,
-    marginBottom: 10
+  authBrand: {
+    fontSize: 42,
+    fontWeight: '900',
+    color: colors.primary,
+    letterSpacing: 10,
+    marginBottom: 12,
   },
-  authAppName: {
-    fontSize: fonts.title,
-    fontWeight: 'bold',
-    color: colors.primaryDark,
-    letterSpacing: 2
+  authDecoLine: {
+    width: 50,
+    height: 2,
+    backgroundColor: colors.primary,
+    borderRadius: 1,
+    marginBottom: 12,
   },
   authTagline: {
-    fontSize: fonts.regular,
-    color: colors.textMedium,
-    marginTop: 5
+    color: colors.textMuted,
+    fontSize: 10,
+    letterSpacing: 4,
+    fontWeight: '600',
   },
-  authForm: {
+  authCard: {
     backgroundColor: colors.cardBackground,
-    borderRadius: borderRadius.xlarge,
-    padding: 25,
-    ...shadow
+    borderRadius: borderRadius.xxlarge,
+    padding: 28,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadowMd,
+  },
+  authCardTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: colors.textDark,
+    marginBottom: 4,
+  },
+  authCardSub: {
+    fontSize: 13,
+    color: colors.textLight,
+    marginBottom: 24,
   },
   inputLabel: {
-    fontSize: fonts.small,
-    fontWeight: 'bold',
-    color: colors.textMedium,
+    color: colors.textLight,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 2,
     marginBottom: 6,
-    marginTop: 5,
-    textTransform: 'uppercase',
-    letterSpacing: 1
+    marginTop: 6,
   },
-  input: {
+  inputWrap: {
     backgroundColor: colors.inputBackground,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: borderRadius.medium,
-    padding: 14,
-    fontSize: fonts.medium,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    marginBottom: 14,
+  },
+  inputIcon: { fontSize: 16, marginRight: 10 },
+  input: {
+    flex: 1,
+    paddingVertical: 14,
+    fontSize: 14,
     color: colors.textDark,
-    marginBottom: 12
   },
   authButton: {
     backgroundColor: colors.primary,
-    padding: 16,
+    padding: 17,
     borderRadius: borderRadius.large,
     alignItems: 'center',
-    marginTop: 10,
-    ...shadow
+    marginTop: 8,
+    ...shadowGold,
   },
   authButtonText: {
     color: colors.textWhite,
-    fontSize: fonts.medium,
-    fontWeight: 'bold',
-    letterSpacing: 1
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 2,
   },
-  switchAuth: {
+  switchAuthBtn: {
     alignItems: 'center',
-    marginTop: 20
+    marginTop: 20,
   },
   switchAuthText: {
-    color: colors.textMedium,
-    fontSize: fonts.regular
+    color: colors.textLight,
+    fontSize: 13,
   },
   switchAuthLink: {
     color: colors.primary,
-    fontWeight: 'bold'
+    fontWeight: '800',
   },
-  authFooter: {
+  authFooterText: {
     textAlign: 'center',
-    color: colors.textLight,
-    fontSize: fonts.small,
-    marginTop: 30
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 28,
+    letterSpacing: 1,
   },
+
+  // ── PROFILE ───────────────────────────────
   profileContainer: {
-    padding: 25,
-    alignItems: 'center'
+    padding: 26,
+    alignItems: 'center',
+  },
+  profileAvatarWrap: {
+    position: 'relative',
+    marginBottom: 16,
   },
   profileAvatar: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 15,
-    ...shadow
+    ...shadowGold,
   },
   profileAvatarText: {
     fontSize: 40,
     color: colors.textWhite,
-    fontWeight: 'bold'
+    fontWeight: '900',
   },
+  profileCameraBtn: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.cardBackground,
+    ...shadowGold,
+  },
+  profileCameraBtnText: { fontSize: 14 },
   profileName: {
-    fontSize: fonts.xxlarge,
-    fontWeight: 'bold',
+    fontSize: 24,
+    fontWeight: '900',
     color: colors.textDark,
-    marginBottom: 5
+    marginBottom: 5,
   },
   profileEmail: {
-    fontSize: fonts.regular,
-    color: colors.textMedium,
-    marginBottom: 20
+    fontSize: 13,
+    color: colors.textLight,
+    marginBottom: 16,
   },
   roleBadge: {
-    backgroundColor: colors.primary,
     paddingHorizontal: 20,
     paddingVertical: 8,
     borderRadius: borderRadius.round,
-    marginBottom: 25
+    borderWidth: 1,
+    marginBottom: 28,
   },
   roleBadgeText: {
-    color: colors.textWhite,
-    fontWeight: 'bold',
-    fontSize: fonts.regular
+    fontWeight: '800',
+    fontSize: 10,
+    letterSpacing: 1,
   },
-  verifyButton: {
-    backgroundColor: colors.success,
-    padding: 15,
+  infoCard: {
+    backgroundColor: colors.cardBackground,
+    width: '100%',
+    padding: 16,
+    borderRadius: borderRadius.large,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow,
+  },
+  infoLabel: {
+    color: colors.textMuted,
+    fontSize: 9,
+    letterSpacing: 2,
+    marginBottom: 6,
+    fontWeight: '700',
+  },
+  infoValue: {
+    color: colors.textDark,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  infoSub: {
+    color: colors.textLight,
+    fontSize: 11,
+    marginTop: 4,
+  },
+  primaryButton: {
+    backgroundColor: colors.primary,
+    padding: 16,
     borderRadius: borderRadius.large,
     alignItems: 'center',
     width: '100%',
-    marginBottom: 15,
-    ...shadow
+    marginBottom: 12,
+    ...shadowGold,
   },
-  verifyButtonText: {
+  primaryButtonText: {
     color: colors.textWhite,
-    fontWeight: 'bold',
-    fontSize: fonts.medium
+    fontWeight: '900',
+    fontSize: 11,
+    letterSpacing: 2,
   },
-  verifyContainer: {
-    padding: 20
+  outlineButton: {
+    backgroundColor: colors.primaryPale,
+    padding: 16,
+    borderRadius: borderRadius.large,
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.borderGold,
   },
+  outlineButtonText: {
+    color: colors.primary,
+    fontWeight: '900',
+    fontSize: 11,
+    letterSpacing: 1.5,
+  },
+  dangerButton: {
+    backgroundColor: colors.dangerPale,
+    padding: 16,
+    borderRadius: borderRadius.large,
+    alignItems: 'center',
+    width: '100%',
+    borderWidth: 1,
+    borderColor: colors.danger + '20',
+  },
+  dangerButtonText: {
+    color: colors.danger,
+    fontWeight: '900',
+    fontSize: 12,
+    letterSpacing: 1,
+  },
+
+  // ── VERIFY ────────────────────────────────
+  verifyContainer: { padding: 24 },
   verifyTitle: {
-    fontSize: fonts.xxlarge,
-    fontWeight: 'bold',
+    fontSize: 26,
+    fontWeight: '900',
     color: colors.textDark,
-    marginBottom: 5
+    marginBottom: 6,
   },
   verifySubtitle: {
-    fontSize: fonts.regular,
+    fontSize: 13,
+    color: colors.textLight,
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  verifyNoteCard: {
+    backgroundColor: colors.primaryPale,
+    borderRadius: borderRadius.large,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: colors.borderGold,
+  },
+  verifyNoteIcon: { fontSize: 26 },
+  verifyNoteContent: { flex: 1 },
+  verifyNoteTitle: {
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  verifyNoteText: {
     color: colors.textMedium,
-    marginBottom: 25
+    fontSize: 11,
+    lineHeight: 16,
   },
   verifyOption: {
     backgroundColor: colors.cardBackground,
-    padding: 20,
-    borderRadius: borderRadius.large,
-    marginBottom: 15,
+    padding: 18,
+    borderRadius: borderRadius.xlarge,
+    marginBottom: 14,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow,
+  },
+  verifyIconWrap: {
+    width: 50,
+    height: 50,
+    borderRadius: 16,
     alignItems: 'center',
-    ...shadow
+    justifyContent: 'center',
+    marginRight: 14,
   },
-  verifyOptionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center'
-  },
-  verifyOptionIcon: {
-    fontSize: 40,
-    marginRight: 15
-  },
+  verifyOptionIcon: { fontSize: 24 },
+  verifyOptionContent: { flex: 1 },
   verifyOptionTitle: {
-    fontSize: fonts.large,
-    fontWeight: 'bold',
-    color: colors.textDark
+    fontSize: 15,
+    fontWeight: '900',
+    marginBottom: 3,
+  },
+  verifyOptionSubtitle: {
+    color: colors.textLight,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    marginBottom: 5,
   },
   verifyOptionDesc: {
-    fontSize: fonts.small,
-    color: colors.textMedium,
-    marginTop: 3
+    fontSize: 11,
+    color: colors.textLight,
+    lineHeight: 16,
+    marginBottom: 8,
+  },
+  verifyDocsBadge: {
+    borderRadius: borderRadius.small,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  verifyDocsText: {
+    fontSize: 10,
+    lineHeight: 16,
+    fontWeight: '600',
   },
   verifyArrow: {
-    fontSize: fonts.xlarge,
-    color: colors.primary,
-    fontWeight: 'bold'
-  },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: colors.primaryDark,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  loadingLogo: {
-    fontSize: 80,
-    marginBottom: 15
-  },
-  loadingAppName: {
-    fontSize: 40,
+    fontSize: 18,
     fontWeight: 'bold',
-    color: colors.textWhite,
-    letterSpacing: 3
+    marginLeft: 8,
   },
-  loadingTagline: {
-    fontSize: fonts.medium,
-    color: colors.primaryLight,
-    marginTop: 8
+  verifyFooterNote: {
+    backgroundColor: colors.inputBackground,
+    borderRadius: borderRadius.large,
+    padding: 16,
+    marginTop: 10,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  verifyFooterText: {
+    color: colors.textLight,
+    fontSize: 11,
+    lineHeight: 18,
+    textAlign: 'center',
   },
 });
