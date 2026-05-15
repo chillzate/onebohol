@@ -21,23 +21,44 @@ class User(Base):
     push_token = Column(String, nullable=True)
     profile_image = Column(String, nullable=True)
 
-    # ZAVARA ROLES:
-    # regular   = normal member/buyer
-    # producer  = farmers, fishermen, livestock
-    # seller    = market vendors, sari-sari
-    # transport = riders, van, truck drivers
-    # haven     = hotels, resorts, homestays
-    # cuisine   = restaurants, carinderias
-    # admin     = platform overseer
+    # ZAVARA ROLES
     role = Column(String, default="regular")
     is_verified = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+
+    # For Producers (farmers/fishermen)
+    farm_name = Column(String, nullable=True)         # ← ADD
+    farm_location = Column(String, nullable=True)     # ← ADD
+    farm_description = Column(Text, nullable=True)    # ← ADD
+
+    # For Cuisine partners (restaurants)
+    restaurant_name = Column(String, nullable=True)   # ← ADD
+    restaurant_address = Column(String, nullable=True)# ← ADD
+    opening_hours = Column(String, nullable=True)     # ← ADD
+
+    # GCash Info
+    gcash_number = Column(String, nullable=True)      # ← ADD
+    gcash_name = Column(String, nullable=True)        # ← ADD
+
+    # Stats
+    total_sales = Column(Float, default=0.0)          # ← ADD
+    total_orders = Column(Integer, default=0)         # ← ADD
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    products = relationship("Product", back_populates="farmer")
-    orders = relationship("Order", back_populates="buyer")
+    products = relationship(
+        "Product", 
+        back_populates="farmer",
+        foreign_keys="Product.farmer_id"
+    )
+    orders = relationship(
+        "Order", 
+        back_populates="buyer",
+        foreign_keys="Order.buyer_id"
+    )
     verifications = relationship(
-        "VerificationRequest", back_populates="user"
+        "VerificationRequest", 
+        back_populates="user"
     )
 
 # ============================================
@@ -162,10 +183,17 @@ class Product(Base):
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     price = Column(Float, nullable=False)
-    unit = Column(String, nullable=False)
-    quantity = Column(Integer, nullable=False)
+    unit = Column(String, nullable=False)      # kg, piece, bundle
+    quantity = Column(Integer, nullable=False)  # stock
     category = Column(String, nullable=False)
+    image_url = Column(String, nullable=True)   # ← ADD THIS
     is_available = Column(Boolean, default=True)
+    is_approved = Column(Boolean, default=False) # ← ADD THIS
+    total_sold = Column(Integer, default=0)      # ← ADD THIS
+    rating = Column(Float, default=0.0)          # ← ADD THIS
+    total_reviews = Column(Integer, default=0)   # ← ADD THIS
+    barangay = Column(String, nullable=True)     # ← ADD THIS
+    municipality = Column(String, nullable=True) # ← ADD THIS
     created_at = Column(DateTime, default=datetime.utcnow)
 
     farmer = relationship("User", back_populates="products")
@@ -178,6 +206,9 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     buyer_id = Column(Integer, ForeignKey("users.id"))
+    seller_id = Column(                              # ← ADD THIS
+        Integer, ForeignKey("users.id"), nullable=True
+    )
     product_id = Column(
         Integer, ForeignKey("products.id"), nullable=True
     )
@@ -186,12 +217,30 @@ class Order(Base):
     )
     quantity = Column(Integer, nullable=False)
     total_price = Column(Float, nullable=False)
+    delivery_fee = Column(Float, default=0.0)        # ← ADD THIS
+    grand_total = Column(Float, nullable=True)        # ← ADD THIS
     status = Column(String, default="pending")
     order_type = Column(String, nullable=False)
     delivery_address = Column(String, nullable=True)
+    delivery_notes = Column(String, nullable=True)   # ← ADD THIS
+    
+    # Payment                                        # ← ADD ALL THESE
+    payment_method = Column(String, default="cod")   # cod/gcash
+    payment_status = Column(String, default="unpaid")
+    gcash_screenshot = Column(String, nullable=True)
+    gcash_reference = Column(String, nullable=True)
+    
+    # Review tracking
+    is_reviewed = Column(Boolean, default=False)     # ← ADD THIS
+    
+    cancel_reason = Column(String, nullable=True)    # ← ADD THIS
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    buyer = relationship("User", back_populates="orders")
+    buyer = relationship(
+        "User", 
+        back_populates="orders",
+        foreign_keys=[buyer_id]        # ← Important! Two FKs to User
+    )
 
 # ============================================
 # RIDE REQUEST MODEL

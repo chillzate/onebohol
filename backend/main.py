@@ -57,6 +57,69 @@ app = FastAPI(
 
 Base.metadata.create_all(bind=engine)
 
+# ============================================
+# AUTO MIGRATION - Add missing columns
+# ============================================
+def run_migrations():
+    from sqlalchemy import text
+    from database import engine
+
+    migrations = [
+        # Users table new columns
+        "ALTER TABLE users ADD COLUMN push_token VARCHAR",
+        "ALTER TABLE users ADD COLUMN profile_image VARCHAR",
+        "ALTER TABLE users ADD COLUMN farm_name VARCHAR",
+        "ALTER TABLE users ADD COLUMN farm_location VARCHAR",
+        "ALTER TABLE users ADD COLUMN farm_description TEXT",
+        "ALTER TABLE users ADD COLUMN restaurant_name VARCHAR",
+        "ALTER TABLE users ADD COLUMN restaurant_address VARCHAR",
+        "ALTER TABLE users ADD COLUMN opening_hours VARCHAR",
+        "ALTER TABLE users ADD COLUMN gcash_number VARCHAR",
+        "ALTER TABLE users ADD COLUMN gcash_name VARCHAR",
+        "ALTER TABLE users ADD COLUMN total_sales FLOAT DEFAULT 0.0",
+        "ALTER TABLE users ADD COLUMN total_orders INTEGER DEFAULT 0",
+
+        # Products table new columns
+        "ALTER TABLE products ADD COLUMN image_url VARCHAR",
+        "ALTER TABLE products ADD COLUMN is_approved BOOLEAN DEFAULT 0",
+        "ALTER TABLE products ADD COLUMN total_sold INTEGER DEFAULT 0",
+        "ALTER TABLE products ADD COLUMN rating FLOAT DEFAULT 0.0",
+        "ALTER TABLE products ADD COLUMN total_reviews INTEGER DEFAULT 0",
+        "ALTER TABLE products ADD COLUMN barangay VARCHAR",
+        "ALTER TABLE products ADD COLUMN municipality VARCHAR",
+
+        # Orders table new columns
+        "ALTER TABLE orders ADD COLUMN seller_id INTEGER",
+        "ALTER TABLE orders ADD COLUMN delivery_fee FLOAT DEFAULT 0.0",
+        "ALTER TABLE orders ADD COLUMN grand_total FLOAT",
+        "ALTER TABLE orders ADD COLUMN delivery_notes VARCHAR",
+        "ALTER TABLE orders ADD COLUMN payment_method VARCHAR DEFAULT 'cod'",
+        "ALTER TABLE orders ADD COLUMN payment_status VARCHAR DEFAULT 'unpaid'",
+        "ALTER TABLE orders ADD COLUMN gcash_screenshot VARCHAR",
+        "ALTER TABLE orders ADD COLUMN gcash_reference VARCHAR",
+        "ALTER TABLE orders ADD COLUMN is_reviewed BOOLEAN DEFAULT 0",
+        "ALTER TABLE orders ADD COLUMN cancel_reason VARCHAR",
+    ]
+
+    with engine.connect() as conn:
+        for migration in migrations:
+            try:
+                conn.execute(text(migration))
+                conn.commit()
+                print(f"✅ Migration done: {migration[:50]}...")
+            except Exception as e:
+                # Column already exists = skip it
+                if "duplicate column" in str(e).lower() or \
+                   "already exists" in str(e).lower():
+                    pass
+                else:
+                    print(f"⚠️ Migration skipped: {str(e)[:60]}")
+
+    print("✅ All migrations complete!")
+
+# Run migrations on startup
+run_migrations()
+
 def get_db():
     db = SessionLocal()
     try:
@@ -1548,4 +1611,649 @@ async def upload_general_image(
         "message": "Image uploaded! ✅",
         "image_url": result["url"],
         "public_id": result["public_id"]
+    }
+# ============================================
+# PRODUCER DASHBOARD ROUTES
+# ============================================
+
+@app.get("/producer/dashboard/{user_id}")
+def get_producer_dashboard(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    # Check user exists and is producer
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    if user.role not in ["producer", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Producer access only"
+        )
+
+    # Get all products by this producer
+    total_products = db.query(Product).filter(
+        Product.farmer_id == user_id
+    ).count()
+
+    # Get all orders for this producer
+    total_orders = db.query(Order).filter(
+        Order.seller_id == user_id
+    ).count()
+
+    # Get pending orders
+    pending_orders = db.query(Order).filter(
+        Order.seller_id == user_id,
+        Order.status == "pending"
+    ).count()
+
+    # Get total revenue (paid orders only)
+    paid_orders = db.query(Order).filter(
+        Order.seller_id == user_id,
+        Order.payment_status == "paid"
+    ).all()
+    total_revenue = sum(
+        o.grand_total or o.total_price 
+        for o in paid_orders
+    )
+
+    # Get recent orders (last 5)
+    recent_orders = db.query(Order).filter(
+        Order.seller_id == user_id
+    ).order_by(
+        Order.created_at.desc()
+    ).limit(5).all()
+
+    # Get top products (most sold)
+    top_products = db.query(Product).filter(
+        Product.farmer_id == user_id
+    ).order_by(
+        Product.total_sold.desc()
+    ).limit(5).all()
+
+    # Build recent orders response
+    recent_orders_data = []
+    for order in recent_orders:
+        buyer = db.query(User).filter(
+            User.id == order.buyer_id
+        ).first()
+        recent_orders_data.append({
+            "order_id": order.id,
+            "buyer_name": buyer.name if buyer else "Unknown",
+            "buyer_phone": buyer.phone if buyer else "",
+            "quantity": order.quantity,
+            "total_price": order.total_price,
+            "grand_total": order.grand_total or order.total_price,
+            "status": order.status,
+            "payment_method": order.payment_method,
+            "payment_status": order.payment_status,
+            "delivery_address": order.delivery_address,
+            "order_type": order.order_type,
+            "created_at": order.created_at
+        })
+
+    return {
+        "producer": {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "phone": user.phone,
+            "role": user.role,
+            "is_verified": user.is_verified,
+            "farm_name": user.farm_name,
+            "farm_location": user.farm_location,
+            "total_sales": user.total_sales,
+            "profile_image": user.profile_image
+        },
+        "stats": {
+            "total_products": total_products,
+            "total_orders": total_orders,
+            "pending_orders": pending_orders,
+            "total_revenue": round(total_revenue, 2)
+        },
+        "recent_orders": recent_orders_data,
+        "top_products": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "price": p.price,
+                "quantity": p.quantity,
+                "total_sold": p.total_sold,
+                "unit": p.unit,
+                "category": p.category,
+                "image_url": p.image_url,
+                "is_available": p.is_available,
+                "rating": p.rating
+            }
+            for p in top_products
+        ]
+    }
+
+
+# ============================================
+# PRODUCER - GET MY PRODUCTS
+# ============================================
+
+@app.get("/producer/products/{user_id}")
+def get_producer_products(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    if user.role not in ["producer", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Producer access only"
+        )
+
+    products = db.query(Product).filter(
+        Product.farmer_id == user_id
+    ).order_by(Product.created_at.desc()).all()
+
+    return {
+        "total": len(products),
+        "products": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "description": p.description,
+                "price": p.price,
+                "unit": p.unit,
+                "quantity": p.quantity,
+                "category": p.category,
+                "image_url": p.image_url,
+                "is_available": p.is_available,
+                "is_approved": p.is_approved,
+                "total_sold": p.total_sold,
+                "rating": p.rating,
+                "total_reviews": p.total_reviews,
+                "barangay": p.barangay,
+                "municipality": p.municipality,
+                "created_at": p.created_at
+            }
+            for p in products
+        ]
+    }
+
+
+# ============================================
+# PRODUCER - ADD PRODUCT
+# ============================================
+
+@app.post("/producer/products/{user_id}")
+def add_producer_product(
+    user_id: int,
+    product: ProductCreate,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    if user.role not in ["producer", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Producer access only"
+        )
+
+    new_product = Product(
+        farmer_id=user_id,
+        name=product.name,
+        description=product.description,
+        price=product.price,
+        unit=product.unit,
+        quantity=product.quantity,
+        category=product.category,
+        is_available=True,
+        is_approved=False,   # Admin must approve
+        total_sold=0,
+        rating=0.0
+    )
+    db.add(new_product)
+    db.commit()
+    db.refresh(new_product)
+
+    return {
+        "message": "✅ Product added! Waiting for admin approval.",
+        "product_id": new_product.id,
+        "name": new_product.name,
+        "status": "pending_approval"
+    }
+
+
+# ============================================
+# PRODUCER - EDIT PRODUCT
+# ============================================
+
+@app.put("/producer/products/{product_id}/edit")
+def edit_producer_product(
+    product_id: int,
+    user_id: int,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    price: Optional[float] = None,
+    quantity: Optional[int] = None,
+    unit: Optional[str] = None,
+    category: Optional[str] = None,
+    is_available: Optional[bool] = None,
+    barangay: Optional[str] = None,
+    municipality: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    # Check product belongs to this producer
+    product = db.query(Product).filter(
+        Product.id == product_id,
+        Product.farmer_id == user_id
+    ).first()
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    # Update only fields that were provided
+    if name is not None:
+        product.name = name
+    if description is not None:
+        product.description = description
+    if price is not None:
+        product.price = price
+    if quantity is not None:
+        product.quantity = quantity
+    if unit is not None:
+        product.unit = unit
+    if category is not None:
+        product.category = category
+    if is_available is not None:
+        product.is_available = is_available
+    if barangay is not None:
+        product.barangay = barangay
+    if municipality is not None:
+        product.municipality = municipality
+
+    db.commit()
+    db.refresh(product)
+
+    return {
+        "message": "✅ Product updated!",
+        "product_id": product.id,
+        "name": product.name
+    }
+
+
+# ============================================
+# PRODUCER - DELETE PRODUCT
+# ============================================
+
+@app.delete("/producer/products/{product_id}")
+def delete_producer_product(
+    product_id: int,
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    product = db.query(Product).filter(
+        Product.id == product_id,
+        Product.farmer_id == user_id
+    ).first()
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found or not yours"
+        )
+
+    db.delete(product)
+    db.commit()
+
+    return {
+        "message": "✅ Product deleted!",
+        "product_id": product_id
+    }
+
+
+# ============================================
+# PRODUCER - GET MY ORDERS
+# ============================================
+
+@app.get("/producer/orders/{user_id}")
+def get_producer_orders(
+    user_id: int,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    if user.role not in ["producer", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Producer access only"
+        )
+
+    # Build query
+    query = db.query(Order).filter(
+        Order.seller_id == user_id
+    )
+
+    # Filter by status if provided
+    if status:
+        query = query.filter(Order.status == status)
+
+    orders = query.order_by(
+        Order.created_at.desc()
+    ).all()
+
+    result = []
+    for order in orders:
+        # Get buyer info
+        buyer = db.query(User).filter(
+            User.id == order.buyer_id
+        ).first()
+
+        # Get product info
+        product = None
+        if order.product_id:
+            product = db.query(Product).filter(
+                Product.id == order.product_id
+            ).first()
+
+        result.append({
+            "order_id": order.id,
+            "buyer_name": buyer.name if buyer else "Unknown",
+            "buyer_phone": buyer.phone if buyer else "",
+            "buyer_address": buyer.address if buyer else "",
+            "product_name": product.name if product else "Unknown",
+            "product_image": product.image_url if product else None,
+            "quantity": order.quantity,
+            "total_price": order.total_price,
+            "delivery_fee": order.delivery_fee,
+            "grand_total": order.grand_total or order.total_price,
+            "status": order.status,
+            "payment_method": order.payment_method,
+            "payment_status": order.payment_status,
+            "gcash_screenshot": order.gcash_screenshot,
+            "gcash_reference": order.gcash_reference,
+            "delivery_address": order.delivery_address,
+            "delivery_notes": order.delivery_notes,
+            "is_reviewed": order.is_reviewed,
+            "cancel_reason": order.cancel_reason,
+            "order_type": order.order_type,
+            "created_at": order.created_at
+        })
+
+    return {
+        "total": len(result),
+        "orders": result
+    }
+
+
+# ============================================
+# PRODUCER - UPDATE ORDER STATUS
+# ============================================
+
+@app.patch("/producer/orders/{order_id}/status")
+async def producer_update_order_status(
+    order_id: int,
+    user_id: int,
+    new_status: str,
+    note: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    # Validate status values
+    valid_statuses = [
+        "confirmed",
+        "preparing",
+        "ready",
+        "delivering",
+        "delivered",
+        "cancelled"
+    ]
+    if new_status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Choose: {valid_statuses}"
+        )
+
+    # Check order belongs to this producer
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.seller_id == user_id
+    ).first()
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    # Update status
+    order.status = new_status
+    if note:
+        order.delivery_notes = note
+
+    # If delivered - update product total_sold
+    if new_status == "delivered":
+        if order.product_id:
+            product = db.query(Product).filter(
+                Product.id == order.product_id
+            ).first()
+            if product:
+                product.total_sold += order.quantity
+
+        # Update seller total_sales
+        seller = db.query(User).filter(
+            User.id == user_id
+        ).first()
+        if seller:
+            seller.total_sales += (
+                order.grand_total or order.total_price
+            )
+            seller.total_orders += 1
+
+    db.commit()
+
+    # Send notification to buyer
+    buyer = db.query(User).filter(
+        User.id == order.buyer_id
+    ).first()
+
+    messages = {
+        "confirmed": {
+            "title": "Order Confirmed! ✅",
+            "body": f"Your order #{str(order_id).zfill(4)} has been confirmed by the seller!"
+        },
+        "preparing": {
+            "title": "Being Prepared! 📦",
+            "body": f"Your order #{str(order_id).zfill(4)} is now being prepared!"
+        },
+        "ready": {
+            "title": "Order Ready! 🎉",
+            "body": f"Your order #{str(order_id).zfill(4)} is ready for pickup/delivery!"
+        },
+        "delivering": {
+            "title": "On The Way! 🛵",
+            "body": f"Your order #{str(order_id).zfill(4)} is on its way to you!"
+        },
+        "delivered": {
+            "title": "Order Delivered! 🎉",
+            "body": f"Your order #{str(order_id).zfill(4)} has been delivered. Enjoy!"
+        },
+        "cancelled": {
+            "title": "Order Cancelled ❌",
+            "body": f"Your order #{str(order_id).zfill(4)} was cancelled. {note or ''}"
+        }
+    }
+
+    if buyer and buyer.push_token:
+        msg = messages.get(new_status)
+        if msg:
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        "https://exp.host/--/api/v2/push/send",
+                        json={
+                            "to": buyer.push_token,
+                            "title": msg["title"],
+                            "body": msg["body"],
+                            "sound": "default",
+                            "badge": 1,
+                            "data": {
+                                "order_id": order_id,
+                                "status": new_status
+                            }
+                        },
+                        headers={
+                            "Content-Type": "application/json"
+                        }
+                    )
+            except:
+                pass
+
+    return {
+        "message": f"✅ Order updated to {new_status}",
+        "order_id": order_id,
+        "new_status": new_status,
+        "notification_sent": True
+    }
+
+
+# ============================================
+# PRODUCER - UPDATE PROFILE
+# ============================================
+
+@app.put("/producer/profile/{user_id}")
+def update_producer_profile(
+    user_id: int,
+    farm_name: Optional[str] = None,
+    farm_location: Optional[str] = None,
+    farm_description: Optional[str] = None,
+    phone: Optional[str] = None,
+    address: Optional[str] = None,
+    gcash_number: Optional[str] = None,
+    gcash_name: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    if user.role not in ["producer", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Producer access only"
+        )
+
+    # Update only provided fields
+    if farm_name is not None:
+        user.farm_name = farm_name
+    if farm_location is not None:
+        user.farm_location = farm_location
+    if farm_description is not None:
+        user.farm_description = farm_description
+    if phone is not None:
+        user.phone = phone
+    if address is not None:
+        user.address = address
+    if gcash_number is not None:
+        user.gcash_number = gcash_number
+    if gcash_name is not None:
+        user.gcash_name = gcash_name
+
+    db.commit()
+
+    return {
+        "message": "✅ Profile updated!",
+        "user_id": user_id,
+        "farm_name": user.farm_name,
+        "farm_location": user.farm_location
+    }
+
+
+# ============================================
+# PRODUCER - GET SALES SUMMARY
+# ============================================
+
+@app.get("/producer/sales/{user_id}")
+def get_producer_sales(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    if user.role not in ["producer", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Producer access only"
+        )
+
+    # All orders
+    all_orders = db.query(Order).filter(
+        Order.seller_id == user_id
+    ).all()
+
+    # Count by status
+    status_counts = {}
+    for order in all_orders:
+        s = order.status
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    # Revenue by month (simple version)
+    monthly = {}
+    for order in all_orders:
+        if order.payment_status == "paid":
+            month = order.created_at.strftime("%Y-%m")
+            amount = order.grand_total or order.total_price
+            monthly[month] = monthly.get(month, 0) + amount
+
+    # Top selling products
+    products = db.query(Product).filter(
+        Product.farmer_id == user_id
+    ).order_by(Product.total_sold.desc()).all()
+
+    return {
+        "summary": {
+            "total_orders": len(all_orders),
+            "total_revenue": user.total_sales,
+            "orders_by_status": status_counts
+        },
+        "monthly_revenue": monthly,
+        "top_products": [
+            {
+                "name": p.name,
+                "total_sold": p.total_sold,
+                "price": p.price,
+                "unit": p.unit,
+                "revenue": p.total_sold * p.price
+            }
+            for p in products[:5]
+        ]
     }
