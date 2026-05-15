@@ -831,6 +831,29 @@ def update_order_status(
     }
 
 # ============================================
+# DEV RESET ROUTE
+# ============================================
+@app.delete("/dev/reset-users")
+def reset_all_users(
+    secret: str,
+    db: Session = Depends(get_db)
+):
+    if secret != "zavara_reset_2024":
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid secret"
+        )
+    db.query(Order).delete()
+    db.query(VerificationRequest).delete()
+    db.query(Product).delete()
+    db.query(User).delete()
+    db.commit()
+    return {
+        "message": "✅ All accounts deleted!",
+        "status": "Fresh start!"
+    }
+
+# ============================================
 # RIDE ROUTES
 # ============================================
 @app.post("/rides", response_model=RideResponse)
