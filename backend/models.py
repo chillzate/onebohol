@@ -1,8 +1,14 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean, Text, DateTime
+from sqlalchemy import (
+    Column, Integer, String, Float,
+    ForeignKey, Boolean, Text, DateTime
+)
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
 
+# ============================================
+# USER MODEL
+# ============================================
 class User(Base):
     __tablename__ = "users"
 
@@ -12,6 +18,15 @@ class User(Base):
     password = Column(String, nullable=False)
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
+
+    # ZAVARA ROLES:
+    # regular   = normal member/buyer
+    # producer  = farmers, fishermen, livestock
+    # seller    = market vendors, sari-sari
+    # transport = riders, van, truck drivers
+    # haven     = hotels, resorts, homestays
+    # cuisine   = restaurants, carinderias
+    # admin     = platform overseer
     role = Column(String, default="regular")
     is_verified = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
@@ -19,17 +34,55 @@ class User(Base):
 
     products = relationship("Product", back_populates="farmer")
     orders = relationship("Order", back_populates="buyer")
+    verifications = relationship(
+        "VerificationRequest", back_populates="user"
+    )
 
+# ============================================
+# VERIFICATION REQUEST MODEL
+# ============================================
 class VerificationRequest(Base):
     __tablename__ = "verification_requests"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
+
+    # Role they are applying for
+    # producer / seller / transport / haven / cuisine
     requested_role = Column(String, nullable=False)
+
+    # Partner sub-type
+    # producer: farmer / fisherman / livestock / crop
+    # seller: market_vendor / sari_sari / small_business
+    # transport: motorcycle / van / truck / courier
+    # haven: hotel / resort / pension / homestay
+    # cuisine: restaurant / carinderia / food_stall
+    partner_type = Column(String, nullable=True)
+
+    # Document URLs (stored as comma-separated)
+    valid_id_url = Column(String, nullable=True)
     document_url = Column(String, nullable=True)
+    selfie_url = Column(String, nullable=True)
+    business_permit_url = Column(String, nullable=True)
+    extra_doc_url = Column(String, nullable=True)
+
+    # Additional info
+    business_name = Column(String, nullable=True)
+    business_address = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+
+    # Status: pending / under_review / approved / rejected
     status = Column(String, default="pending")
+    rejection_reason = Column(String, nullable=True)
+    reviewed_by = Column(Integer, nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    user = relationship("User", back_populates="verifications")
+
+# ============================================
+# RESTAURANT MODEL
+# ============================================
 class Restaurant(Base):
     __tablename__ = "restaurants"
 
@@ -46,6 +99,10 @@ class Restaurant(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     menu_items = relationship("MenuItem", back_populates="restaurant")
+
+# ============================================
+# MENU ITEM MODEL
+# ============================================
 class MenuItem(Base):
     __tablename__ = "menu_items"
 
@@ -60,6 +117,9 @@ class MenuItem(Base):
 
     restaurant = relationship("Restaurant", back_populates="menu_items")
 
+# ============================================
+# PRODUCT MODEL (Farm/Market Products)
+# ============================================
 class Product(Base):
     __tablename__ = "products"
 
@@ -76,13 +136,20 @@ class Product(Base):
 
     farmer = relationship("User", back_populates="products")
 
+# ============================================
+# ORDER MODEL
+# ============================================
 class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, index=True)
     buyer_id = Column(Integer, ForeignKey("users.id"))
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
-    menu_item_id = Column(Integer, ForeignKey("menu_items.id"), nullable=True)
+    product_id = Column(
+        Integer, ForeignKey("products.id"), nullable=True
+    )
+    menu_item_id = Column(
+        Integer, ForeignKey("menu_items.id"), nullable=True
+    )
     quantity = Column(Integer, nullable=False)
     total_price = Column(Float, nullable=False)
     status = Column(String, default="pending")
@@ -92,6 +159,9 @@ class Order(Base):
 
     buyer = relationship("User", back_populates="orders")
 
+# ============================================
+# RIDE REQUEST MODEL
+# ============================================
 class RideRequest(Base):
     __tablename__ = "ride_requests"
 
@@ -100,10 +170,14 @@ class RideRequest(Base):
     pickup_location = Column(String, nullable=False)
     dropoff_location = Column(String, nullable=False)
     ride_type = Column(String, nullable=False)
+    vehicle_type = Column(String, nullable=True)
     status = Column(String, default="pending")
     fare = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+# ============================================
+# JOB POST MODEL
+# ============================================
 class JobPost(Base):
     __tablename__ = "job_posts"
 
@@ -117,6 +191,9 @@ class JobPost(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+# ============================================
+# SOS ALERT MODEL
+# ============================================
 class SosAlert(Base):
     __tablename__ = "sos_alerts"
 
