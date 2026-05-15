@@ -41,6 +41,38 @@ class User(Base):
     )
 
 # ============================================
+# REVIEW MODEL
+# ============================================
+class Review(Base):
+    __tablename__ = "reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    restaurant_id = Column(
+        Integer, ForeignKey("restaurants.id"),
+        nullable=True
+    )
+    product_id = Column(
+        Integer, ForeignKey("products.id"),
+        nullable=True
+    )
+    order_id = Column(
+        Integer, ForeignKey("orders.id"),
+        nullable=True
+    )
+    rating = Column(Integer, nullable=False)
+    comment = Column(Text, nullable=True)
+    image_url = Column(String, nullable=True)
+    is_verified_purchase = Column(
+        Boolean, default=False
+    )
+    created_at = Column(
+        DateTime, default=datetime.utcnow
+    )
+
+    user = relationship("User")
+
+# ============================================
 # VERIFICATION REQUEST MODEL
 # ============================================
 class VerificationRequest(Base):

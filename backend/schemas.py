@@ -1,7 +1,33 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+# Add to schemas.py
 
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime
+
+class ReviewCreate(BaseModel):
+    rating: int
+    comment: Optional[str] = None
+    restaurant_id: Optional[int] = None
+    product_id: Optional[int] = None
+    order_id: Optional[int] = None
+
+class ReviewResponse(BaseModel):
+    id: int
+    user_id: int
+    rating: int
+    comment: Optional[str]
+    restaurant_id: Optional[int]
+    product_id: Optional[int]
+    order_id: Optional[int]
+    is_verified_purchase: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+        
 # USER SCHEMAS
 class UserRegister(BaseModel):
     name: str
