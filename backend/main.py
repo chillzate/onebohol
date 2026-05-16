@@ -1,5 +1,5 @@
 # ============================================
-# ZAVARA MAIN.PY - CLEAN VERSION
+# ZAVARA MAIN.PY - COMPLETE FIXED VERSION
 # ============================================
 from fastapi import (
     FastAPI, Depends, HTTPException,
@@ -11,7 +11,8 @@ from models import (
     User, Product, Order,
     Restaurant, MenuItem,
     RideRequest, JobPost,
-    SosAlert, VerificationRequest
+    SosAlert, VerificationRequest,
+    Review
 )
 from schemas import (
     UserRegister, UserResponse,
@@ -43,6 +44,7 @@ from dotenv import load_dotenv
 from typing import List, Optional
 from datetime import datetime
 import os
+import httpx
 
 load_dotenv()
 
@@ -58,14 +60,13 @@ app = FastAPI(
 Base.metadata.create_all(bind=engine)
 
 # ============================================
-# AUTO MIGRATION - Add missing columns
+# AUTO MIGRATION
 # ============================================
 def run_migrations():
     from sqlalchemy import text
     from database import engine
 
     migrations = [
-        # Users table new columns
         "ALTER TABLE users ADD COLUMN push_token VARCHAR",
         "ALTER TABLE users ADD COLUMN profile_image VARCHAR",
         "ALTER TABLE users ADD COLUMN farm_name VARCHAR",
@@ -78,8 +79,6 @@ def run_migrations():
         "ALTER TABLE users ADD COLUMN gcash_name VARCHAR",
         "ALTER TABLE users ADD COLUMN total_sales FLOAT DEFAULT 0.0",
         "ALTER TABLE users ADD COLUMN total_orders INTEGER DEFAULT 0",
-
-        # Products table new columns
         "ALTER TABLE products ADD COLUMN image_url VARCHAR",
         "ALTER TABLE products ADD COLUMN is_approved BOOLEAN DEFAULT 0",
         "ALTER TABLE products ADD COLUMN total_sold INTEGER DEFAULT 0",
@@ -87,8 +86,6 @@ def run_migrations():
         "ALTER TABLE products ADD COLUMN total_reviews INTEGER DEFAULT 0",
         "ALTER TABLE products ADD COLUMN barangay VARCHAR",
         "ALTER TABLE products ADD COLUMN municipality VARCHAR",
-
-        # Orders table new columns
         "ALTER TABLE orders ADD COLUMN seller_id INTEGER",
         "ALTER TABLE orders ADD COLUMN delivery_fee FLOAT DEFAULT 0.0",
         "ALTER TABLE orders ADD COLUMN grand_total FLOAT",
@@ -106,18 +103,16 @@ def run_migrations():
             try:
                 conn.execute(text(migration))
                 conn.commit()
-                print(f"✅ Migration done: {migration[:50]}...")
+                print(f"✅ Migration: {migration[:50]}...")
             except Exception as e:
-                # Column already exists = skip it
                 if "duplicate column" in str(e).lower() or \
                    "already exists" in str(e).lower():
                     pass
                 else:
-                    print(f"⚠️ Migration skipped: {str(e)[:60]}")
+                    print(f"⚠️ Skipped: {str(e)[:60]}")
 
     print("✅ All migrations complete!")
 
-# Run migrations on startup
 run_migrations()
 
 def get_db():
@@ -139,44 +134,6 @@ ZAVARA_ROLES = {
     "cuisine":   "Cuisine Partner",
     "admin":     "Overseer"
 }
-
-PRODUCER_TYPES = [
-    "farmer",
-    "fisherman",
-    "livestock_raiser",
-    "crop_producer",
-    "other_producer"
-]
-
-SELLER_TYPES = [
-    "market_vendor",
-    "sari_sari_store",
-    "small_business",
-    "cooperative"
-]
-
-TRANSPORT_TYPES = [
-    "motorcycle_rider",
-    "van_driver",
-    "truck_driver",
-    "courier_service"
-]
-
-HAVEN_TYPES = [
-    "hotel",
-    "resort",
-    "pension_house",
-    "homestay",
-    "airbnb"
-]
-
-CUISINE_TYPES = [
-    "restaurant",
-    "carinderia",
-    "food_stall",
-    "cloud_kitchen",
-    "catering"
-]
 
 # ============================================
 # HOME
@@ -288,7 +245,7 @@ def apply_verification(
     if requested_role not in ZAVARA_ROLES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid role. Choose from: {list(ZAVARA_ROLES.keys())}"
+            detail=f"Invalid role."
         )
     existing = db.query(VerificationRequest).filter(
         VerificationRequest.user_id == user_id,
@@ -374,16 +331,14 @@ def approve_verification(
     req.status = "approved"
     req.reviewed_by = admin_id
     req.reviewed_at = datetime.utcnow()
-
     user = db.query(User).filter(
         User.id == req.user_id
     ).first()
     user.role = req.requested_role
     user.is_verified = True
     db.commit()
-
     return {
-        "message": f"✅ Approved! User is now a {ZAVARA_ROLES.get(req.requested_role)}",
+        "message": f"✅ Approved!",
         "user_id": req.user_id,
         "new_role": req.requested_role
     }
@@ -448,13 +403,9 @@ def get_pending_verifications(
             "user_name": user.name if user else "Unknown",
             "user_email": user.email if user else "Unknown",
             "requested_role": req.requested_role,
-            "role_label": ZAVARA_ROLES.get(
-                req.requested_role
-            ),
+            "role_label": ZAVARA_ROLES.get(req.requested_role),
             "partner_type": req.partner_type,
             "business_name": req.business_name,
-            "business_address": req.business_address,
-            "description": req.description,
             "submitted_at": req.created_at,
             "status": req.status
         })
@@ -472,7 +423,7 @@ def set_user_role(
     if new_role not in ZAVARA_ROLES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid role. Choose: {list(ZAVARA_ROLES.keys())}"
+            detail=f"Invalid role."
         )
     user = db.query(User).filter(
         User.id == user_id
@@ -563,6 +514,29 @@ def get_admin_dashboard(
             "total_products": total_products
         },
         "users_by_role": role_counts
+    }
+
+# ============================================
+# DEV RESET ROUTE
+# ============================================
+@app.delete("/dev/reset-users")
+def reset_all_users(
+    secret: str,
+    db: Session = Depends(get_db)
+):
+    if secret != "zavara_reset_2024":
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid secret"
+        )
+    db.query(Order).delete()
+    db.query(VerificationRequest).delete()
+    db.query(Product).delete()
+    db.query(User).delete()
+    db.commit()
+    return {
+        "message": "✅ All accounts deleted!",
+        "status": "Fresh start!"
     }
 
 # ============================================
@@ -740,7 +714,7 @@ def get_products(
     if user.role not in ["producer", "seller", "admin"]:
         raise HTTPException(
             status_code=403,
-            detail="Access denied. Partner verification required."
+            detail="Access denied."
         )
     return db.query(Product).filter(
         Product.is_available == True
@@ -786,7 +760,7 @@ def create_order(
         if not order.menu_item_id:
             raise HTTPException(
                 status_code=400,
-                detail="menu_item_id required for food orders"
+                detail="menu_item_id required"
             )
         menu_item = db.query(MenuItem).filter(
             MenuItem.id == order.menu_item_id,
@@ -816,7 +790,7 @@ def create_order(
         if not order.product_id:
             raise HTTPException(
                 status_code=400,
-                detail="product_id required for market orders"
+                detail="product_id required"
             )
         product = db.query(Product).filter(
             Product.id == order.product_id,
@@ -884,14 +858,12 @@ async def update_order_status(
     if new_status not in valid_statuses:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid status. Choose: {valid_statuses}"
+            detail=f"Invalid status."
         )
 
-    # Update status
     order.status = new_status
     db.commit()
 
-    # AUTO SEND NOTIFICATION! 🔥
     buyer = db.query(User).filter(
         User.id == order.buyer_id
     ).first()
@@ -899,23 +871,23 @@ async def update_order_status(
     messages = {
         "confirmed": {
             "title": "Order Confirmed! ✅",
-            "body": f"Your order #{str(order_id).zfill(4)} has been confirmed!"
+            "body": f"Order #{str(order_id).zfill(4)} confirmed!"
         },
         "preparing": {
             "title": "Cooking Now! 👨‍🍳",
-            "body": f"Your order #{str(order_id).zfill(4)} is being prepared!"
+            "body": f"Order #{str(order_id).zfill(4)} being prepared!"
         },
         "delivering": {
             "title": "Rider On The Way! 🛵",
-            "body": f"Your order #{str(order_id).zfill(4)} is on its way!"
+            "body": f"Order #{str(order_id).zfill(4)} is on its way!"
         },
         "delivered": {
             "title": "Order Delivered! 🎉",
-            "body": f"Enjoy your order #{str(order_id).zfill(4)}! 😋"
+            "body": f"Enjoy your order #{str(order_id).zfill(4)}!"
         },
         "cancelled": {
             "title": "Order Cancelled ❌",
-            "body": f"Your order #{str(order_id).zfill(4)} was cancelled."
+            "body": f"Order #{str(order_id).zfill(4)} was cancelled."
         },
     }
 
@@ -949,209 +921,6 @@ async def update_order_status(
         "order_id": order_id,
         "notification_sent": True
     }
-
-# ============================================
-# DEV RESET ROUTE
-# ============================================
-@app.delete("/dev/reset-users")
-def reset_all_users(
-    secret: str,
-    db: Session = Depends(get_db)
-):
-    if secret != "zavara_reset_2024":
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid secret"
-        )
-    db.query(Order).delete()
-    db.query(VerificationRequest).delete()
-    db.query(Product).delete()
-    db.query(User).delete()
-    db.commit()
-    return {
-        "message": "✅ All accounts deleted!",
-        "status": "Fresh start!"
-    }
-
-# ============================================
-# REVIEW ROUTES
-# ============================================
-from models import Review
-
-@app.post("/reviews")
-def create_review(
-    user_id: int,
-    rating: int,
-    comment: Optional[str] = None,
-    restaurant_id: Optional[int] = None,
-    product_id: Optional[int] = None,
-    order_id: Optional[int] = None,
-    db: Session = Depends(get_db)
-):
-    # Validate rating
-    if rating < 1 or rating > 5:
-        raise HTTPException(
-            status_code=400,
-            detail="Rating must be 1-5"
-        )
-
-    # Check user exists
-    user = db.query(User).filter(
-        User.id == user_id
-    ).first()
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-
-    # Check if verified purchase
-    is_verified = False
-    if order_id:
-        order = db.query(Order).filter(
-            Order.id == order_id,
-            Order.buyer_id == user_id,
-            Order.status == "delivered"
-        ).first()
-        if order:
-            is_verified = True
-
-    # Check duplicate review
-    existing = db.query(Review).filter(
-        Review.user_id == user_id,
-        Review.restaurant_id == restaurant_id,
-        Review.order_id == order_id
-    ).first()
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="You already reviewed this!"
-        )
-
-    new_review = Review(
-        user_id=user_id,
-        rating=rating,
-        comment=comment,
-        restaurant_id=restaurant_id,
-        product_id=product_id,
-        order_id=order_id,
-        is_verified_purchase=is_verified
-    )
-    db.add(new_review)
-    db.commit()
-    db.refresh(new_review)
-
-    return {
-        "message": "✅ Review submitted!",
-        "review_id": new_review.id,
-        "rating": rating,
-        "is_verified_purchase": is_verified
-    }
-
-@app.get("/reviews/restaurant/{restaurant_id}")
-def get_restaurant_reviews(
-    restaurant_id: int,
-    db: Session = Depends(get_db)
-):
-    reviews = db.query(Review).filter(
-        Review.restaurant_id == restaurant_id
-    ).order_by(Review.created_at.desc()).all()
-
-    # Calculate average rating
-    if reviews:
-        avg = sum(r.rating for r in reviews) / len(reviews)
-    else:
-        avg = 0
-
-    result = []
-    for review in reviews:
-        user = db.query(User).filter(
-            User.id == review.user_id
-        ).first()
-        result.append({
-            "id": review.id,
-            "user_name": user.name if user else "Anonymous",
-            "rating": review.rating,
-            "comment": review.comment,
-            "is_verified": review.is_verified_purchase,
-            "date": review.created_at,
-        })
-
-    return {
-        "restaurant_id": restaurant_id,
-        "total_reviews": len(reviews),
-        "average_rating": round(avg, 1),
-        "reviews": result
-    }
-
-@app.get("/reviews/product/{product_id}")
-def get_product_reviews(
-    product_id: int,
-    db: Session = Depends(get_db)
-):
-    reviews = db.query(Review).filter(
-        Review.product_id == product_id
-    ).order_by(Review.created_at.desc()).all()
-
-    if reviews:
-        avg = sum(r.rating for r in reviews) / len(reviews)
-    else:
-        avg = 0
-
-    result = []
-    for review in reviews:
-        user = db.query(User).filter(
-            User.id == review.user_id
-        ).first()
-        result.append({
-            "id": review.id,
-            "user_name": user.name if user else "Anonymous",
-            "rating": review.rating,
-            "comment": review.comment,
-            "is_verified": review.is_verified_purchase,
-            "date": review.created_at,
-        })
-
-    return {
-        "product_id": product_id,
-        "total_reviews": len(reviews),
-        "average_rating": round(avg, 1),
-        "reviews": result
-    }
-
-@app.get("/reviews/user/{user_id}")
-def get_user_reviews(
-    user_id: int,
-    db: Session = Depends(get_db)
-):
-    reviews = db.query(Review).filter(
-        Review.user_id == user_id
-    ).order_by(Review.created_at.desc()).all()
-
-    return {
-        "user_id": user_id,
-        "total_reviews": len(reviews),
-        "reviews": reviews
-    }
-
-@app.delete("/reviews/{review_id}")
-def delete_review(
-    review_id: int,
-    user_id: int,
-    db: Session = Depends(get_db)
-):
-    review = db.query(Review).filter(
-        Review.id == review_id,
-        Review.user_id == user_id
-    ).first()
-    if not review:
-        raise HTTPException(
-            status_code=404,
-            detail="Review not found"
-        )
-    db.delete(review)
-    db.commit()
-    return {"message": "Review deleted!"}
 
 # ============================================
 # RIDE ROUTES
@@ -1223,151 +992,6 @@ def delete_job(
     return {"message": "Job deleted"}
 
 # ============================================
-# PUSH NOTIFICATION ROUTES
-# ============================================
-import httpx
-
-@app.post("/notifications/save-token")
-async def save_push_token(
-    user_id: int,
-    token: str,
-    db: Session = Depends(get_db)
-):
-    """Save Expo push token for user"""
-    user = db.query(User).filter(
-        User.id == user_id
-    ).first()
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-    user.push_token = token
-    db.commit()
-    return {
-        "message": "✅ Push token saved!",
-        "user_id": user_id
-    }
-
-@app.post("/notifications/send")
-async def send_notification(
-    user_id: int,
-    title: str,
-    body: str,
-    db: Session = Depends(get_db)
-):
-    """Send push notification to user"""
-    user = db.query(User).filter(
-        User.id == user_id
-    ).first()
-    if not user or not user.push_token:
-        raise HTTPException(
-            status_code=404,
-            detail="User or token not found"
-        )
-
-    # Send via Expo Push API
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://exp.host/--/api/v2/push/send",
-            json={
-                "to": user.push_token,
-                "title": title,
-                "body": body,
-                "sound": "default",
-                "badge": 1,
-            },
-            headers={
-                "Content-Type": "application/json",
-            }
-        )
-
-    return {
-        "message": "✅ Notification sent!",
-        "response": response.json()
-    }
-
-@app.post("/notifications/send-order-update")
-async def send_order_notification(
-    order_id: int,
-    new_status: str,
-    db: Session = Depends(get_db)
-):
-    """Send notification when order status changes"""
-    order = db.query(Order).filter(
-        Order.id == order_id
-    ).first()
-    if not order:
-        raise HTTPException(
-            status_code=404,
-            detail="Order not found"
-        )
-
-    buyer = db.query(User).filter(
-        User.id == order.buyer_id
-    ).first()
-
-    if not buyer or not buyer.push_token:
-        return {
-            "message": "No push token found",
-            "sent": False
-        }
-
-    # Status messages
-    messages = {
-        "confirmed": {
-            "title": "Order Confirmed! ✅",
-            "body": f"Your order #{order_id} has been confirmed!"
-        },
-        "preparing": {
-            "title": "Cooking Now! 👨‍🍳",
-            "body": f"Your order #{order_id} is being prepared!"
-        },
-        "delivering": {
-            "title": "Rider On The Way! 🛵",
-            "body": f"Your order #{order_id} is on its way!"
-        },
-        "delivered": {
-            "title": "Order Delivered! 🎉",
-            "body": f"Your order #{order_id} has been delivered!"
-        },
-        "cancelled": {
-            "title": "Order Cancelled ❌",
-            "body": f"Your order #{order_id} was cancelled."
-        },
-    }
-
-    msg = messages.get(new_status, {
-        "title": "Order Update 📦",
-        "body": f"Your order #{order_id} is now {new_status}"
-    })
-
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            "https://exp.host/--/api/v2/push/send",
-            json={
-                "to": buyer.push_token,
-                "title": msg["title"],
-                "body": msg["body"],
-                "sound": "default",
-                "badge": 1,
-                "data": {
-                    "order_id": order_id,
-                    "status": new_status
-                }
-            },
-            headers={
-                "Content-Type": "application/json",
-            }
-        )
-
-    return {
-        "message": "✅ Notification sent!",
-        "order_id": order_id,
-        "status": new_status
-    }
-
-# ============================================
 # SOS ROUTES
 # ============================================
 @app.post("/sos", response_model=SosAlertResponse)
@@ -1391,6 +1015,224 @@ def get_sos_alerts(db: Session = Depends(get_db)):
     return db.query(SosAlert).filter(
         SosAlert.status == "active"
     ).all()
+
+# ============================================
+# PUSH NOTIFICATION ROUTES
+# ============================================
+@app.post("/notifications/save-token")
+async def save_push_token(
+    user_id: int,
+    token: str,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    user.push_token = token
+    db.commit()
+    return {
+        "message": "✅ Push token saved!",
+        "user_id": user_id
+    }
+
+@app.post("/notifications/send")
+async def send_notification(
+    user_id: int,
+    title: str,
+    body: str,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user or not user.push_token:
+        raise HTTPException(
+            status_code=404,
+            detail="User or token not found"
+        )
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://exp.host/--/api/v2/push/send",
+            json={
+                "to": user.push_token,
+                "title": title,
+                "body": body,
+                "sound": "default",
+                "badge": 1,
+            },
+            headers={
+                "Content-Type": "application/json",
+            }
+        )
+    return {
+        "message": "✅ Notification sent!",
+        "response": response.json()
+    }
+
+# ============================================
+# REVIEW ROUTES
+# ============================================
+@app.post("/reviews")
+def create_review(
+    user_id: int,
+    rating: int,
+    comment: Optional[str] = None,
+    restaurant_id: Optional[int] = None,
+    product_id: Optional[int] = None,
+    order_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    if rating < 1 or rating > 5:
+        raise HTTPException(
+            status_code=400,
+            detail="Rating must be 1-5"
+        )
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    is_verified = False
+    if order_id:
+        order = db.query(Order).filter(
+            Order.id == order_id,
+            Order.buyer_id == user_id,
+            Order.status == "delivered"
+        ).first()
+        if order:
+            is_verified = True
+
+    existing = db.query(Review).filter(
+        Review.user_id == user_id,
+        Review.order_id == order_id
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="You already reviewed this!"
+        )
+
+    new_review = Review(
+        user_id=user_id,
+        rating=rating,
+        comment=comment,
+        restaurant_id=restaurant_id,
+        product_id=product_id,
+        order_id=order_id,
+        is_verified_purchase=is_verified
+    )
+    db.add(new_review)
+    db.commit()
+    db.refresh(new_review)
+    return {
+        "message": "✅ Review submitted!",
+        "review_id": new_review.id,
+        "rating": rating,
+        "is_verified_purchase": is_verified
+    }
+
+@app.get("/reviews/restaurant/{restaurant_id}")
+def get_restaurant_reviews(
+    restaurant_id: int,
+    db: Session = Depends(get_db)
+):
+    reviews = db.query(Review).filter(
+        Review.restaurant_id == restaurant_id
+    ).order_by(Review.created_at.desc()).all()
+    avg = round(
+        sum(r.rating for r in reviews) / len(reviews), 1
+    ) if reviews else 0
+    result = []
+    for review in reviews:
+        user = db.query(User).filter(
+            User.id == review.user_id
+        ).first()
+        result.append({
+            "id": review.id,
+            "user_name": user.name if user else "Anonymous",
+            "rating": review.rating,
+            "comment": review.comment,
+            "is_verified": review.is_verified_purchase,
+            "date": review.created_at,
+        })
+    return {
+        "restaurant_id": restaurant_id,
+        "total_reviews": len(reviews),
+        "average_rating": avg,
+        "reviews": result
+    }
+
+@app.get("/reviews/product/{product_id}")
+def get_product_reviews(
+    product_id: int,
+    db: Session = Depends(get_db)
+):
+    reviews = db.query(Review).filter(
+        Review.product_id == product_id
+    ).order_by(Review.created_at.desc()).all()
+    avg = round(
+        sum(r.rating for r in reviews) / len(reviews), 1
+    ) if reviews else 0
+    result = []
+    for review in reviews:
+        user = db.query(User).filter(
+            User.id == review.user_id
+        ).first()
+        result.append({
+            "id": review.id,
+            "user_name": user.name if user else "Anonymous",
+            "rating": review.rating,
+            "comment": review.comment,
+            "is_verified": review.is_verified_purchase,
+            "date": review.created_at,
+        })
+    return {
+        "product_id": product_id,
+        "total_reviews": len(reviews),
+        "average_rating": avg,
+        "reviews": result
+    }
+
+@app.get("/reviews/user/{user_id}")
+def get_user_reviews(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    reviews = db.query(Review).filter(
+        Review.user_id == user_id
+    ).order_by(Review.created_at.desc()).all()
+    return {
+        "user_id": user_id,
+        "total_reviews": len(reviews),
+        "reviews": reviews
+    }
+
+@app.delete("/reviews/{review_id}")
+def delete_review(
+    review_id: int,
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    review = db.query(Review).filter(
+        Review.id == review_id,
+        Review.user_id == user_id
+    ).first()
+    if not review:
+        raise HTTPException(
+            status_code=404,
+            detail="Review not found"
+        )
+    db.delete(review)
+    db.commit()
+    return {"message": "Review deleted!"}
 
 # ============================================
 # IMAGE UPLOAD ROUTES
@@ -1457,7 +1299,7 @@ async def upload_product_photo(
     ]:
         raise HTTPException(
             status_code=400,
-            detail="Only JPEG, PNG, JPG, WEBP allowed"
+            detail="Only images allowed"
         )
     file_bytes = await file.read()
     if len(file_bytes) > 5 * 1024 * 1024:
@@ -1469,7 +1311,7 @@ async def upload_product_photo(
     if not result["success"]:
         raise HTTPException(
             status_code=500,
-            detail=f"Upload failed: {result['error']}"
+            detail=f"Upload failed"
         )
     product.image_url = result["url"]
     db.commit()
@@ -1499,7 +1341,7 @@ async def upload_restaurant_photo(
     ]:
         raise HTTPException(
             status_code=400,
-            detail="Only JPEG, PNG, JPG, WEBP allowed"
+            detail="Only images allowed"
         )
     file_bytes = await file.read()
     if len(file_bytes) > 5 * 1024 * 1024:
@@ -1511,7 +1353,7 @@ async def upload_restaurant_photo(
     if not result["success"]:
         raise HTTPException(
             status_code=500,
-            detail=f"Upload failed: {result['error']}"
+            detail=f"Upload failed"
         )
     restaurant.image_url = result["url"]
     db.commit()
@@ -1536,15 +1378,6 @@ async def upload_verification_document(
             status_code=404,
             detail="User not found"
         )
-    if file.content_type not in [
-        "image/jpeg", "image/png",
-        "image/jpg", "image/webp",
-        "application/pdf"
-    ]:
-        raise HTTPException(
-            status_code=400,
-            detail="Only images and PDF allowed"
-        )
     file_bytes = await file.read()
     if len(file_bytes) > 10 * 1024 * 1024:
         raise HTTPException(
@@ -1555,7 +1388,7 @@ async def upload_verification_document(
     if not result["success"]:
         raise HTTPException(
             status_code=500,
-            detail=f"Upload failed: {result['error']}"
+            detail=f"Upload failed"
         )
     verification = db.query(VerificationRequest).filter(
         VerificationRequest.user_id == user_id,
@@ -1568,8 +1401,6 @@ async def upload_verification_document(
             verification.business_permit_url = result["url"]
         elif doc_type == "selfie":
             verification.selfie_url = result["url"]
-        elif doc_type == "extra_doc":
-            verification.extra_doc_url = result["url"]
         else:
             verification.document_url = result["url"]
         db.commit()
@@ -1584,14 +1415,6 @@ async def upload_verification_document(
 async def upload_general_image(
     file: UploadFile = File(...)
 ):
-    if file.content_type not in [
-        "image/jpeg", "image/png",
-        "image/jpg", "image/webp"
-    ]:
-        raise HTTPException(
-            status_code=400,
-            detail="Only JPEG, PNG, JPG, WEBP allowed"
-        )
     file_bytes = await file.read()
     if len(file_bytes) > 5 * 1024 * 1024:
         raise HTTPException(
@@ -1605,23 +1428,22 @@ async def upload_general_image(
     if not result["success"]:
         raise HTTPException(
             status_code=500,
-            detail=f"Upload failed: {result['error']}"
+            detail=f"Upload failed"
         )
     return {
         "message": "Image uploaded! ✅",
         "image_url": result["url"],
         "public_id": result["public_id"]
     }
+
 # ============================================
 # PRODUCER DASHBOARD ROUTES
 # ============================================
-
 @app.get("/producer/dashboard/{user_id}")
 def get_producer_dashboard(
     user_id: int,
     db: Session = Depends(get_db)
 ):
-    # Check user exists and is producer
     user = db.query(User).filter(
         User.id == user_id
     ).first()
@@ -1635,48 +1457,35 @@ def get_producer_dashboard(
             status_code=403,
             detail="Producer access only"
         )
-
-    # Get all products by this producer
     total_products = db.query(Product).filter(
         Product.farmer_id == user_id
     ).count()
-
-    # Get all orders for this producer
     total_orders = db.query(Order).filter(
         Order.seller_id == user_id
     ).count()
-
-    # Get pending orders
     pending_orders = db.query(Order).filter(
         Order.seller_id == user_id,
         Order.status == "pending"
     ).count()
-
-    # Get total revenue (paid orders only)
     paid_orders = db.query(Order).filter(
         Order.seller_id == user_id,
         Order.payment_status == "paid"
     ).all()
     total_revenue = sum(
-        o.grand_total or o.total_price 
+        o.grand_total or o.total_price
         for o in paid_orders
     )
-
-    # Get recent orders (last 5)
     recent_orders = db.query(Order).filter(
         Order.seller_id == user_id
     ).order_by(
         Order.created_at.desc()
     ).limit(5).all()
-
-    # Get top products (most sold)
     top_products = db.query(Product).filter(
         Product.farmer_id == user_id
     ).order_by(
         Product.total_sold.desc()
     ).limit(5).all()
 
-    # Build recent orders response
     recent_orders_data = []
     for order in recent_orders:
         buyer = db.query(User).filter(
@@ -1734,11 +1543,6 @@ def get_producer_dashboard(
         ]
     }
 
-
-# ============================================
-# PRODUCER - GET MY PRODUCTS
-# ============================================
-
 @app.get("/producer/products/{user_id}")
 def get_producer_products(
     user_id: int,
@@ -1757,11 +1561,9 @@ def get_producer_products(
             status_code=403,
             detail="Producer access only"
         )
-
     products = db.query(Product).filter(
         Product.farmer_id == user_id
     ).order_by(Product.created_at.desc()).all()
-
     return {
         "total": len(products),
         "products": [
@@ -1787,11 +1589,6 @@ def get_producer_products(
         ]
     }
 
-
-# ============================================
-# PRODUCER - ADD PRODUCT
-# ============================================
-
 @app.post("/producer/products/{user_id}")
 def add_producer_product(
     user_id: int,
@@ -1811,7 +1608,6 @@ def add_producer_product(
             status_code=403,
             detail="Producer access only"
         )
-
     new_product = Product(
         farmer_id=user_id,
         name=product.name,
@@ -1821,25 +1617,18 @@ def add_producer_product(
         quantity=product.quantity,
         category=product.category,
         is_available=True,
-        is_approved=False,   # Admin must approve
         total_sold=0,
         rating=0.0
     )
     db.add(new_product)
     db.commit()
     db.refresh(new_product)
-
     return {
-        "message": "✅ Product added! Waiting for admin approval.",
+        "message": "✅ Product added!",
         "product_id": new_product.id,
         "name": new_product.name,
         "status": "pending_approval"
     }
-
-
-# ============================================
-# PRODUCER - EDIT PRODUCT
-# ============================================
 
 @app.put("/producer/products/{product_id}/edit")
 def edit_producer_product(
@@ -1856,7 +1645,6 @@ def edit_producer_product(
     municipality: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    # Check product belongs to this producer
     product = db.query(Product).filter(
         Product.id == product_id,
         Product.farmer_id == user_id
@@ -1866,8 +1654,6 @@ def edit_producer_product(
             status_code=404,
             detail="Product not found"
         )
-
-    # Update only fields that were provided
     if name is not None:
         product.name = name
     if description is not None:
@@ -1886,20 +1672,13 @@ def edit_producer_product(
         product.barangay = barangay
     if municipality is not None:
         product.municipality = municipality
-
     db.commit()
     db.refresh(product)
-
     return {
         "message": "✅ Product updated!",
         "product_id": product.id,
         "name": product.name
     }
-
-
-# ============================================
-# PRODUCER - DELETE PRODUCT
-# ============================================
 
 @app.delete("/producer/products/{product_id}")
 def delete_producer_product(
@@ -1914,21 +1693,14 @@ def delete_producer_product(
     if not product:
         raise HTTPException(
             status_code=404,
-            detail="Product not found or not yours"
+            detail="Product not found"
         )
-
     db.delete(product)
     db.commit()
-
     return {
         "message": "✅ Product deleted!",
         "product_id": product_id
     }
-
-
-# ============================================
-# PRODUCER - GET MY ORDERS
-# ============================================
 
 @app.get("/producer/orders/{user_id}")
 def get_producer_orders(
@@ -1949,67 +1721,45 @@ def get_producer_orders(
             status_code=403,
             detail="Producer access only"
         )
-
-    # Build query
     query = db.query(Order).filter(
         Order.seller_id == user_id
     )
-
-    # Filter by status if provided
     if status:
         query = query.filter(Order.status == status)
-
     orders = query.order_by(
         Order.created_at.desc()
     ).all()
 
     result = []
     for order in orders:
-        # Get buyer info
         buyer = db.query(User).filter(
             User.id == order.buyer_id
         ).first()
-
-        # Get product info
         product = None
         if order.product_id:
             product = db.query(Product).filter(
                 Product.id == order.product_id
             ).first()
-
         result.append({
             "order_id": order.id,
             "buyer_name": buyer.name if buyer else "Unknown",
             "buyer_phone": buyer.phone if buyer else "",
-            "buyer_address": buyer.address if buyer else "",
             "product_name": product.name if product else "Unknown",
             "product_image": product.image_url if product else None,
             "quantity": order.quantity,
             "total_price": order.total_price,
-            "delivery_fee": order.delivery_fee,
             "grand_total": order.grand_total or order.total_price,
             "status": order.status,
             "payment_method": order.payment_method,
             "payment_status": order.payment_status,
-            "gcash_screenshot": order.gcash_screenshot,
-            "gcash_reference": order.gcash_reference,
             "delivery_address": order.delivery_address,
-            "delivery_notes": order.delivery_notes,
-            "is_reviewed": order.is_reviewed,
-            "cancel_reason": order.cancel_reason,
             "order_type": order.order_type,
             "created_at": order.created_at
         })
-
     return {
         "total": len(result),
         "orders": result
     }
-
-
-# ============================================
-# PRODUCER - UPDATE ORDER STATUS
-# ============================================
 
 @app.patch("/producer/orders/{order_id}/status")
 async def producer_update_order_status(
@@ -2019,22 +1769,15 @@ async def producer_update_order_status(
     note: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    # Validate status values
     valid_statuses = [
-        "confirmed",
-        "preparing",
-        "ready",
-        "delivering",
-        "delivered",
-        "cancelled"
+        "confirmed", "preparing", "ready",
+        "delivering", "delivered", "cancelled"
     ]
     if new_status not in valid_statuses:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid status. Choose: {valid_statuses}"
+            detail=f"Invalid status."
         )
-
-    # Check order belongs to this producer
     order = db.query(Order).filter(
         Order.id == order_id,
         Order.seller_id == user_id
@@ -2044,13 +1787,9 @@ async def producer_update_order_status(
             status_code=404,
             detail="Order not found"
         )
-
-    # Update status
     order.status = new_status
     if note:
         order.delivery_notes = note
-
-    # If delivered - update product total_sold
     if new_status == "delivered":
         if order.product_id:
             product = db.query(Product).filter(
@@ -2058,8 +1797,6 @@ async def producer_update_order_status(
             ).first()
             if product:
                 product.total_sold += order.quantity
-
-        # Update seller total_sales
         seller = db.query(User).filter(
             User.id == user_id
         ).first()
@@ -2068,65 +1805,31 @@ async def producer_update_order_status(
                 order.grand_total or order.total_price
             )
             seller.total_orders += 1
-
     db.commit()
 
-    # Send notification to buyer
     buyer = db.query(User).filter(
         User.id == order.buyer_id
     ).first()
-
-    messages = {
-        "confirmed": {
-            "title": "Order Confirmed! ✅",
-            "body": f"Your order #{str(order_id).zfill(4)} has been confirmed by the seller!"
-        },
-        "preparing": {
-            "title": "Being Prepared! 📦",
-            "body": f"Your order #{str(order_id).zfill(4)} is now being prepared!"
-        },
-        "ready": {
-            "title": "Order Ready! 🎉",
-            "body": f"Your order #{str(order_id).zfill(4)} is ready for pickup/delivery!"
-        },
-        "delivering": {
-            "title": "On The Way! 🛵",
-            "body": f"Your order #{str(order_id).zfill(4)} is on its way to you!"
-        },
-        "delivered": {
-            "title": "Order Delivered! 🎉",
-            "body": f"Your order #{str(order_id).zfill(4)} has been delivered. Enjoy!"
-        },
-        "cancelled": {
-            "title": "Order Cancelled ❌",
-            "body": f"Your order #{str(order_id).zfill(4)} was cancelled. {note or ''}"
-        }
-    }
-
     if buyer and buyer.push_token:
-        msg = messages.get(new_status)
-        if msg:
-            try:
-                async with httpx.AsyncClient() as client:
-                    await client.post(
-                        "https://exp.host/--/api/v2/push/send",
-                        json={
-                            "to": buyer.push_token,
-                            "title": msg["title"],
-                            "body": msg["body"],
-                            "sound": "default",
-                            "badge": 1,
-                            "data": {
-                                "order_id": order_id,
-                                "status": new_status
-                            }
-                        },
-                        headers={
-                            "Content-Type": "application/json"
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    "https://exp.host/--/api/v2/push/send",
+                    json={
+                        "to": buyer.push_token,
+                        "title": "Order Update!",
+                        "body": f"Order #{str(order_id).zfill(4)} is now {new_status}",
+                        "sound": "default",
+                        "badge": 1,
+                        "data": {
+                            "order_id": order_id,
+                            "status": new_status
                         }
-                    )
-            except:
-                pass
+                    },
+                    headers={"Content-Type": "application/json"}
+                )
+        except:
+            pass
 
     return {
         "message": f"✅ Order updated to {new_status}",
@@ -2134,11 +1837,6 @@ async def producer_update_order_status(
         "new_status": new_status,
         "notification_sent": True
     }
-
-
-# ============================================
-# PRODUCER - UPDATE PROFILE
-# ============================================
 
 @app.put("/producer/profile/{user_id}")
 def update_producer_profile(
@@ -2165,8 +1863,6 @@ def update_producer_profile(
             status_code=403,
             detail="Producer access only"
         )
-
-    # Update only provided fields
     if farm_name is not None:
         user.farm_name = farm_name
     if farm_location is not None:
@@ -2181,20 +1877,12 @@ def update_producer_profile(
         user.gcash_number = gcash_number
     if gcash_name is not None:
         user.gcash_name = gcash_name
-
     db.commit()
-
     return {
         "message": "✅ Profile updated!",
         "user_id": user_id,
-        "farm_name": user.farm_name,
-        "farm_location": user.farm_location
+        "farm_name": user.farm_name
     }
-
-
-# ============================================
-# PRODUCER - GET SALES SUMMARY
-# ============================================
 
 @app.get("/producer/sales/{user_id}")
 def get_producer_sales(
@@ -2214,31 +1902,22 @@ def get_producer_sales(
             status_code=403,
             detail="Producer access only"
         )
-
-    # All orders
     all_orders = db.query(Order).filter(
         Order.seller_id == user_id
     ).all()
-
-    # Count by status
     status_counts = {}
     for order in all_orders:
         s = order.status
         status_counts[s] = status_counts.get(s, 0) + 1
-
-    # Revenue by month (simple version)
     monthly = {}
     for order in all_orders:
         if order.payment_status == "paid":
             month = order.created_at.strftime("%Y-%m")
             amount = order.grand_total or order.total_price
             monthly[month] = monthly.get(month, 0) + amount
-
-    # Top selling products
     products = db.query(Product).filter(
         Product.farmer_id == user_id
     ).order_by(Product.total_sold.desc()).all()
-
     return {
         "summary": {
             "total_orders": len(all_orders),
@@ -2258,29 +1937,61 @@ def get_producer_sales(
         ]
     }
 
-    # ============================================
+# ============================================
 # CUISINE DASHBOARD ROUTES
 # ============================================
-
 @app.get("/cuisine/dashboard/{user_id}")
-def get_cuisine_dashboard(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+def get_cuisine_dashboard(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
     if user.role not in ["cuisine", "admin"]:
-        raise HTTPException(status_code=403, detail="Cuisine partner access only")
-    restaurant = db.query(Restaurant).filter(Restaurant.owner_id == user_id).first()
+        raise HTTPException(
+            status_code=403,
+            detail="Cuisine partner access only"
+        )
+    restaurant = db.query(Restaurant).filter(
+        Restaurant.owner_id == user_id
+    ).first()
     restaurant_id = restaurant.id if restaurant else None
-    total_menu_items = db.query(MenuItem).filter(MenuItem.restaurant_id == restaurant_id).count() if restaurant_id else 0
-    total_orders = db.query(Order).filter(Order.seller_id == user_id).count()
-    pending_orders = db.query(Order).filter(Order.seller_id == user_id, Order.status == "pending").count()
-    paid_orders = db.query(Order).filter(Order.seller_id == user_id, Order.payment_status == "paid").all()
-    total_revenue = sum(o.grand_total or o.total_price for o in paid_orders)
-    recent_orders = db.query(Order).filter(Order.seller_id == user_id).order_by(Order.created_at.desc()).limit(5).all()
+    total_menu_items = db.query(MenuItem).filter(
+        MenuItem.restaurant_id == restaurant_id
+    ).count() if restaurant_id else 0
+    total_orders = db.query(Order).filter(
+        Order.seller_id == user_id
+    ).count()
+    pending_orders = db.query(Order).filter(
+        Order.seller_id == user_id,
+        Order.status == "pending"
+    ).count()
+    paid_orders = db.query(Order).filter(
+        Order.seller_id == user_id,
+        Order.payment_status == "paid"
+    ).all()
+    total_revenue = sum(
+        o.grand_total or o.total_price
+        for o in paid_orders
+    )
+    recent_orders = db.query(Order).filter(
+        Order.seller_id == user_id
+    ).order_by(Order.created_at.desc()).limit(5).all()
+
     recent_orders_data = []
     for order in recent_orders:
-        buyer = db.query(User).filter(User.id == order.buyer_id).first()
-        menu_item = db.query(MenuItem).filter(MenuItem.id == order.menu_item_id).first() if order.menu_item_id else None
+        buyer = db.query(User).filter(
+            User.id == order.buyer_id
+        ).first()
+        menu_item = db.query(MenuItem).filter(
+            MenuItem.id == order.menu_item_id
+        ).first() if order.menu_item_id else None
         recent_orders_data.append({
             "order_id": order.id,
             "buyer_name": buyer.name if buyer else "Unknown",
@@ -2295,8 +2006,14 @@ def get_cuisine_dashboard(user_id: int, db: Session = Depends(get_db)):
             "delivery_address": order.delivery_address,
             "created_at": str(order.created_at)
         })
-    reviews = db.query(Review).filter(Review.restaurant_id == restaurant_id).all() if restaurant_id else []
-    avg_rating = round(sum(r.rating for r in reviews) / len(reviews), 1) if reviews else 0
+
+    reviews = db.query(Review).filter(
+        Review.restaurant_id == restaurant_id
+    ).all() if restaurant_id else []
+    avg_rating = round(
+        sum(r.rating for r in reviews) / len(reviews), 1
+    ) if reviews else 0
+
     return {
         "cuisine_partner": {
             "id": user.id,
@@ -2332,18 +2049,36 @@ def get_cuisine_dashboard(user_id: int, db: Session = Depends(get_db)):
         "recent_orders": recent_orders_data
     }
 
-
 @app.get("/cuisine/menu/{user_id}")
-def get_cuisine_menu(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+def get_cuisine_menu(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
     if user.role not in ["cuisine", "admin"]:
-        raise HTTPException(status_code=403, detail="Cuisine partner access only")
-    restaurant = db.query(Restaurant).filter(Restaurant.owner_id == user_id).first()
+        raise HTTPException(
+            status_code=403,
+            detail="Cuisine partner access only"
+        )
+    restaurant = db.query(Restaurant).filter(
+        Restaurant.owner_id == user_id
+    ).first()
     if not restaurant:
-        return {"message": "No restaurant found. Create one first.", "total": 0, "menu_items": []}
-    items = db.query(MenuItem).filter(MenuItem.restaurant_id == restaurant.id).all()
+        return {
+            "message": "No restaurant found.",
+            "total": 0,
+            "menu_items": []
+        }
+    items = db.query(MenuItem).filter(
+        MenuItem.restaurant_id == restaurant.id
+    ).all()
     return {
         "restaurant_id": restaurant.id,
         "restaurant_name": restaurant.name,
@@ -2362,17 +2097,33 @@ def get_cuisine_menu(user_id: int, db: Session = Depends(get_db)):
         ]
     }
 
-
 @app.post("/cuisine/menu/{user_id}")
-def add_cuisine_menu_item(user_id: int, item: MenuItemCreate, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+def add_cuisine_menu_item(
+    user_id: int,
+    item: MenuItemCreate,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
     if user.role not in ["cuisine", "admin"]:
-        raise HTTPException(status_code=403, detail="Cuisine partner access only")
-    restaurant = db.query(Restaurant).filter(Restaurant.owner_id == user_id).first()
+        raise HTTPException(
+            status_code=403,
+            detail="Cuisine partner access only"
+        )
+    restaurant = db.query(Restaurant).filter(
+        Restaurant.owner_id == user_id
+    ).first()
     if not restaurant:
-        raise HTTPException(status_code=404, detail="Create your restaurant first")
+        raise HTTPException(
+            status_code=404,
+            detail="Create your restaurant first"
+        )
     new_item = MenuItem(
         restaurant_id=restaurant.id,
         name=item.name,
@@ -2392,7 +2143,6 @@ def add_cuisine_menu_item(user_id: int, item: MenuItemCreate, db: Session = Depe
         "price": new_item.price
     }
 
-
 @app.put("/cuisine/menu/{item_id}/edit")
 def edit_cuisine_menu_item(
     item_id: int,
@@ -2404,15 +2154,23 @@ def edit_cuisine_menu_item(
     is_available: Optional[bool] = None,
     db: Session = Depends(get_db)
 ):
-    restaurant = db.query(Restaurant).filter(Restaurant.owner_id == user_id).first()
+    restaurant = db.query(Restaurant).filter(
+        Restaurant.owner_id == user_id
+    ).first()
     if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Restaurant not found"
+        )
     item = db.query(MenuItem).filter(
         MenuItem.id == item_id,
         MenuItem.restaurant_id == restaurant.id
     ).first()
     if not item:
-        raise HTTPException(status_code=404, detail="Menu item not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Menu item not found"
+        )
     if name is not None:
         item.name = name
     if description is not None:
@@ -2431,60 +2189,91 @@ def edit_cuisine_menu_item(
         "name": item.name
     }
 
-
 @app.delete("/cuisine/menu/{item_id}/remove")
-def delete_cuisine_menu_item(item_id: int, user_id: int, db: Session = Depends(get_db)):
-    restaurant = db.query(Restaurant).filter(Restaurant.owner_id == user_id).first()
+def delete_cuisine_menu_item(
+    item_id: int,
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    restaurant = db.query(Restaurant).filter(
+        Restaurant.owner_id == user_id
+    ).first()
     if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Restaurant not found"
+        )
     item = db.query(MenuItem).filter(
         MenuItem.id == item_id,
         MenuItem.restaurant_id == restaurant.id
     ).first()
     if not item:
-        raise HTTPException(status_code=404, detail="Menu item not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Menu item not found"
+        )
     db.delete(item)
     db.commit()
-    return {"message": "Menu item deleted!", "item_id": item_id}
-
+    return {
+        "message": "Menu item deleted!",
+        "item_id": item_id
+    }
 
 @app.get("/cuisine/orders/{user_id}")
-def get_cuisine_orders(user_id: int, status: Optional[str] = None, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+def get_cuisine_orders(
+    user_id: int,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
     if user.role not in ["cuisine", "admin"]:
-        raise HTTPException(status_code=403, detail="Cuisine partner access only")
-    query = db.query(Order).filter(Order.seller_id == user_id)
+        raise HTTPException(
+            status_code=403,
+            detail="Cuisine partner access only"
+        )
+    query = db.query(Order).filter(
+        Order.seller_id == user_id
+    )
     if status:
         query = query.filter(Order.status == status)
-    orders = query.order_by(Order.created_at.desc()).all()
+    orders = query.order_by(
+        Order.created_at.desc()
+    ).all()
+
     result = []
     for order in orders:
-        buyer = db.query(User).filter(User.id == order.buyer_id).first()
-        menu_item = db.query(MenuItem).filter(MenuItem.id == order.menu_item_id).first() if order.menu_item_id else None
+        buyer = db.query(User).filter(
+            User.id == order.buyer_id
+        ).first()
+        menu_item = db.query(MenuItem).filter(
+            MenuItem.id == order.menu_item_id
+        ).first() if order.menu_item_id else None
         result.append({
             "order_id": order.id,
             "buyer_name": buyer.name if buyer else "Unknown",
             "buyer_phone": buyer.phone if buyer else "",
             "item_name": menu_item.name if menu_item else "Unknown",
-            "item_image": menu_item.image_url if menu_item else None,
             "quantity": order.quantity,
             "total_price": order.total_price,
-            "delivery_fee": order.delivery_fee,
             "grand_total": order.grand_total or order.total_price,
             "status": order.status,
             "payment_method": order.payment_method,
             "payment_status": order.payment_status,
-            "gcash_screenshot": order.gcash_screenshot,
             "delivery_address": order.delivery_address,
-            "delivery_notes": order.delivery_notes,
-            "is_reviewed": order.is_reviewed,
             "order_type": order.order_type,
             "created_at": str(order.created_at)
         })
-    return {"total": len(result), "orders": result}
-
+    return {
+        "total": len(result),
+        "orders": result
+    }
 
 @app.patch("/cuisine/orders/{order_id}/status")
 async def cuisine_update_order_status(
@@ -2493,20 +2282,39 @@ async def cuisine_update_order_status(
     new_status: str,
     db: Session = Depends(get_db)
 ):
-    valid_statuses = ["confirmed", "preparing", "ready", "delivering", "delivered", "cancelled"]
+    valid_statuses = [
+        "confirmed", "preparing", "ready",
+        "delivering", "delivered", "cancelled"
+    ]
     if new_status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Choose: {valid_statuses}")
-    order = db.query(Order).filter(Order.id == order_id, Order.seller_id == user_id).first()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status."
+        )
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.seller_id == user_id
+    ).first()
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
     order.status = new_status
     if new_status == "delivered":
-        seller = db.query(User).filter(User.id == user_id).first()
+        seller = db.query(User).filter(
+            User.id == user_id
+        ).first()
         if seller:
-            seller.total_sales += (order.grand_total or order.total_price)
+            seller.total_sales += (
+                order.grand_total or order.total_price
+            )
             seller.total_orders += 1
     db.commit()
-    buyer = db.query(User).filter(User.id == order.buyer_id).first()
+
+    buyer = db.query(User).filter(
+        User.id == order.buyer_id
+    ).first()
     if buyer and buyer.push_token:
         try:
             async with httpx.AsyncClient() as client:
@@ -2518,12 +2326,16 @@ async def cuisine_update_order_status(
                         "body": f"Your food order is now {new_status}",
                         "sound": "default",
                         "badge": 1,
-                        "data": {"order_id": order_id, "status": new_status}
+                        "data": {
+                            "order_id": order_id,
+                            "status": new_status
+                        }
                     },
                     headers={"Content-Type": "application/json"}
                 )
         except:
             pass
+
     return {
         "message": f"Order updated to {new_status}",
         "order_id": order_id,
@@ -2531,17 +2343,32 @@ async def cuisine_update_order_status(
         "notification_sent": True
     }
 
-
 @app.patch("/cuisine/restaurant/{user_id}/toggle")
-def toggle_restaurant_status(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+def toggle_restaurant_status(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
     if user.role not in ["cuisine", "admin"]:
-        raise HTTPException(status_code=403, detail="Cuisine partner access only")
-    restaurant = db.query(Restaurant).filter(Restaurant.owner_id == user_id).first()
+        raise HTTPException(
+            status_code=403,
+            detail="Cuisine partner access only"
+        )
+    restaurant = db.query(Restaurant).filter(
+        Restaurant.owner_id == user_id
+    ).first()
     if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Restaurant not found"
+        )
     restaurant.is_open = not restaurant.is_open
     db.commit()
     status = "OPEN" if restaurant.is_open else "CLOSED"
@@ -2550,7 +2377,6 @@ def toggle_restaurant_status(user_id: int, db: Session = Depends(get_db)):
         "restaurant_id": restaurant.id,
         "is_open": restaurant.is_open
     }
-
 
 @app.put("/cuisine/profile/{user_id}")
 def update_cuisine_profile(
@@ -2563,11 +2389,19 @@ def update_cuisine_profile(
     gcash_name: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
     if user.role not in ["cuisine", "admin"]:
-        raise HTTPException(status_code=403, detail="Cuisine partner access only")
+        raise HTTPException(
+            status_code=403,
+            detail="Cuisine partner access only"
+        )
     if restaurant_name is not None:
         user.restaurant_name = restaurant_name
     if restaurant_address is not None:
@@ -2587,15 +2421,27 @@ def update_cuisine_profile(
         "restaurant_name": user.restaurant_name
     }
 
-
 @app.get("/cuisine/sales/{user_id}")
-def get_cuisine_sales(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+def get_cuisine_sales(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
     if user.role not in ["cuisine", "admin"]:
-        raise HTTPException(status_code=403, detail="Cuisine partner access only")
-    all_orders = db.query(Order).filter(Order.seller_id == user_id).all()
+        raise HTTPException(
+            status_code=403,
+            detail="Cuisine partner access only"
+        )
+    all_orders = db.query(Order).filter(
+        Order.seller_id == user_id
+    ).all()
     status_counts = {}
     for order in all_orders:
         s = order.status
@@ -2606,8 +2452,12 @@ def get_cuisine_sales(user_id: int, db: Session = Depends(get_db)):
             month = order.created_at.strftime("%Y-%m")
             amount = order.grand_total or order.total_price
             monthly[month] = monthly.get(month, 0) + amount
-    restaurant = db.query(Restaurant).filter(Restaurant.owner_id == user_id).first()
-    top_items = db.query(MenuItem).filter(MenuItem.restaurant_id == restaurant.id).all() if restaurant else []
+    restaurant = db.query(Restaurant).filter(
+        Restaurant.owner_id == user_id
+    ).first()
+    top_items = db.query(MenuItem).filter(
+        MenuItem.restaurant_id == restaurant.id
+    ).all() if restaurant else []
     return {
         "summary": {
             "total_orders": len(all_orders),
@@ -2629,14 +2479,12 @@ def get_cuisine_sales(user_id: int, db: Session = Depends(get_db)):
 # ============================================
 # GCASH PAYMENT ROUTES
 # ============================================
-
 @app.post("/payment/gcash/initiate")
 def initiate_gcash_payment(
     order_id: int,
     buyer_id: int,
     db: Session = Depends(get_db)
 ):
-    # Get order
     order = db.query(Order).filter(
         Order.id == order_id,
         Order.buyer_id == buyer_id
@@ -2651,8 +2499,6 @@ def initiate_gcash_payment(
             status_code=400,
             detail="Order already paid"
         )
-
-    # Get seller GCash info
     seller = db.query(User).filter(
         User.id == order.seller_id
     ).first()
@@ -2661,16 +2507,14 @@ def initiate_gcash_payment(
             status_code=404,
             detail="Seller not found"
         )
-
     return {
         "message": "Send payment to this GCash number",
         "order_id": order_id,
         "amount": order.grand_total or order.total_price,
         "seller_gcash_number": seller.gcash_number,
         "seller_gcash_name": seller.gcash_name,
-        "instruction": "1. Open GCash app\n2. Send money to the number above\n3. Screenshot the receipt\n4. Upload the screenshot below"
+        "instruction": "1. Open GCash\n2. Send money\n3. Screenshot receipt\n4. Upload below"
     }
-
 
 @app.post("/payment/gcash/upload/{order_id}")
 async def upload_gcash_screenshot(
@@ -2680,7 +2524,6 @@ async def upload_gcash_screenshot(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    # Verify order belongs to buyer
     order = db.query(Order).filter(
         Order.id == order_id,
         Order.buyer_id == buyer_id
@@ -2695,18 +2538,6 @@ async def upload_gcash_screenshot(
             status_code=400,
             detail="Order already paid"
         )
-
-    # Validate file type
-    if file.content_type not in [
-        "image/jpeg", "image/png",
-        "image/jpg", "image/webp"
-    ]:
-        raise HTTPException(
-            status_code=400,
-            detail="Only image files allowed"
-        )
-
-    # Upload screenshot to Cloudinary
     file_bytes = await file.read()
     result = upload_image(
         file_bytes,
@@ -2717,19 +2548,15 @@ async def upload_gcash_screenshot(
             status_code=500,
             detail="Upload failed"
         )
-
-    # Save screenshot URL and reference to order
     order.gcash_screenshot = result["url"]
     order.gcash_reference = gcash_reference
     order.payment_method = "gcash"
     order.payment_status = "pending_verification"
     db.commit()
 
-    # Notify seller to verify payment
     seller = db.query(User).filter(
         User.id == order.seller_id
     ).first()
-
     if seller and seller.push_token:
         try:
             async with httpx.AsyncClient() as client:
@@ -2737,8 +2564,8 @@ async def upload_gcash_screenshot(
                     "https://exp.host/--/api/v2/push/send",
                     json={
                         "to": seller.push_token,
-                        "title": "GCash Payment Received!",
-                        "body": f"Order #{str(order_id).zfill(4)} - Please verify the payment screenshot.",
+                        "title": "GCash Payment Received! 💰",
+                        "body": f"Order #{str(order_id).zfill(4)} - Please verify the payment!",
                         "sound": "default",
                         "badge": 1,
                         "data": {
@@ -2752,15 +2579,14 @@ async def upload_gcash_screenshot(
             pass
 
     return {
-        "message": "Screenshot uploaded! Waiting for seller verification.",
+        "message": "Screenshot uploaded! Waiting for verification.",
         "order_id": order_id,
         "screenshot_url": result["url"],
         "gcash_reference": gcash_reference,
         "payment_status": "pending_verification"
     }
 
-
- @app.post("/payment/gcash/verify/{order_id}")
+@app.post("/payment/gcash/verify/{order_id}")
 async def verify_gcash_payment(
     order_id: int,
     seller_id: int,
@@ -2768,7 +2594,6 @@ async def verify_gcash_payment(
     reason: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    # Verify order belongs to seller
     order = db.query(Order).filter(
         Order.id == order_id,
         Order.seller_id == seller_id
@@ -2778,18 +2603,14 @@ async def verify_gcash_payment(
             status_code=404,
             detail="Order not found"
         )
-
     buyer = db.query(User).filter(
         User.id == order.buyer_id
     ).first()
 
     if approved:
-        # Mark as paid
         order.payment_status = "paid"
         order.status = "confirmed"
         db.commit()
-
-        # Notify buyer payment approved
         if buyer and buyer.push_token:
             try:
                 async with httpx.AsyncClient() as client:
@@ -2797,8 +2618,8 @@ async def verify_gcash_payment(
                         "https://exp.host/--/api/v2/push/send",
                         json={
                             "to": buyer.push_token,
-                            "title": "Payment Verified!",
-                            "body": f"Your GCash payment for order #{str(order_id).zfill(4)} has been verified!",
+                            "title": "Payment Verified! ✅",
+                            "body": f"GCash payment for order #{str(order_id).zfill(4)} verified!",
                             "sound": "default",
                             "badge": 1,
                             "data": {
@@ -2810,7 +2631,6 @@ async def verify_gcash_payment(
                     )
             except:
                 pass
-
         return {
             "message": "Payment verified! Order confirmed.",
             "order_id": order_id,
@@ -2818,13 +2638,10 @@ async def verify_gcash_payment(
             "order_status": "confirmed"
         }
     else:
-        # Reject payment
         order.payment_status = "unpaid"
         order.gcash_screenshot = None
         order.gcash_reference = None
         db.commit()
-
-        # Notify buyer payment rejected
         if buyer and buyer.push_token:
             try:
                 async with httpx.AsyncClient() as client:
@@ -2832,8 +2649,8 @@ async def verify_gcash_payment(
                         "https://exp.host/--/api/v2/push/send",
                         json={
                             "to": buyer.push_token,
-                            "title": "Payment Rejected",
-                            "body": f"Your payment for order #{str(order_id).zfill(4)} was rejected. {reason or 'Please try again.'}",
+                            "title": "Payment Rejected ❌",
+                            "body": f"Payment for order #{str(order_id).zfill(4)} rejected. {reason or 'Please try again.'}",
                             "sound": "default",
                             "badge": 1,
                             "data": {
@@ -2845,11 +2662,12 @@ async def verify_gcash_payment(
                     )
             except:
                 pass
-
         return {
             "message": "Payment rejected.",
             "order_id": order_id,
-
+            "payment_status": "unpaid",
+            "reason": reason
+        }
 
 @app.get("/payment/gcash/pending/{seller_id}")
 def get_pending_payments(
@@ -2864,14 +2682,20 @@ def get_pending_payments(
 
     result = []
     for order in orders:
-        buyer = db.query(User).filter(User.id == order.buyer_id).first()
+        buyer = db.query(User).filter(
+            User.id == order.buyer_id
+        ).first()
         item_name = "Unknown"
         if order.product_id:
-            product = db.query(Product).filter(Product.id == order.product_id).first()
+            product = db.query(Product).filter(
+                Product.id == order.product_id
+            ).first()
             if product:
                 item_name = product.name
         elif order.menu_item_id:
-            menu_item = db.query(MenuItem).filter(MenuItem.id == order.menu_item_id).first()
+            menu_item = db.query(MenuItem).filter(
+                MenuItem.id == order.menu_item_id
+            ).first()
             if menu_item:
                 item_name = menu_item.name
         result.append({
@@ -2892,7 +2716,6 @@ def get_pending_payments(
         "pending_payments": result
     }
 
-
 @app.get("/payment/status/{order_id}")
 def get_payment_status(
     order_id: int,
@@ -2904,7 +2727,10 @@ def get_payment_status(
         Order.buyer_id == buyer_id
     ).first()
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
     return {
         "order_id": order_id,
         "payment_method": order.payment_method,
