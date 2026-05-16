@@ -1,7 +1,17 @@
 // ============================================
-// ZAVARA MARKET SCREEN - COMPLETE FIXED v2.1
+// ZAVARA MARKET SCREEN - v3.0
+// ✅ Recreated + Performance Improved
+// ✅ Role-based product visibility
+// ✅ Cart persistence
+// ✅ Better than before!
 // ============================================
-import { useState, useEffect, useCallback } from 'react';
+import {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from 'react';
 import {
   View,
   Text,
@@ -9,351 +19,441 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  TextInput,
-  Modal,
-  ScrollView,
   StatusBar,
   Image,
+  TextInput,
   RefreshControl,
-  Alert,
+  Animated,
 } from 'react-native';
 import axios from 'axios';
+import * as Haptics from 'expo-haptics';
 import {
   colors,
   shadow,
   shadowMd,
-  shadowDark,
-  shadowStrong,
   shadowGold,
   borderRadius,
 } from '../theme';
-import { API_URL } from '../config';
+import { showToast }     from './ToastManager';
+import { API_URL }       from '../config';
+import { useAppContext } from '../context/AppContext';
+import CartScreen        from './CartScreen';
 
-export default function MarketScreen({
-  userId,
-  userRole,
-  onBack,
-  onCartUpdate,  // 🆕 tells parent how many items in cart
-}) {
-  const [products, setProducts]           = useState([]);
-  const [loading, setLoading]             = useState(true);
-  const [refreshing, setRefreshing]       = useState(false); // 🆕
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [searchText, setSearchText]       = useState(''); // 🆕
-  const [orderModal, setOrderModal]       = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [quantity, setQuantity]           = useState('1');
-  const [ordering, setOrdering]           = useState(false);
-  const [orderSuccess, setOrderSuccess]   = useState(false);
-  const [orderError, setOrderError]       = useState(false); // 🆕
-  const [cart, setCart]                   = useState([]);    // 🆕 local cart
-  const [cartModal, setCartModal]         = useState(false); // 🆕 cart preview
-  const [address, setAddress]             = useState('');    // 🆕
+// ============================================
+// CONSTANTS - outside component = no recreate
+// ============================================
+const CATEGORIES = [
+  'All', 'Vegetables', 'Fruits',
+  'Seafood', 'Meat', 'Rice & Grains',
+  'Dairy', 'Others',
+];
 
-  const categories = [
-    { id: 'all',        label: '🌴 All'       },
-    { id: 'seafood',    label: '🐟 Seafood'   },
-    { id: 'vegetables', label: '🥦 Veggies'   },
-    { id: 'rice',       label: '🌾 Rice'      },
-    { id: 'fruits',     label: '🍌 Fruits'    },
-    { id: 'livestock',  label: '🐄 Livestock' },
-    { id: 'other',      label: '🌿 Other'     },
-  ];
+// ============================================
+// PRODUCT CARD - separate component
+// Prevents full list re-render on cart change
+// ============================================
+function ProductCard({ item, cartQty, onAdd, onRemove }) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  // ── FETCH PRODUCTS ───────────────────────
-  useEffect(() => {
-    fetchProducts();
-  }, []);
+  const handleAdd = useCallback(() => {
+    Animated.sequence([
+      Animated.spring(scaleAnim, {
+        toValue:         0.93,
+        friction:        4,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue:         1,
+        friction:        4,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    Haptics.impactAsync(
+      Haptics.ImpactFeedbackStyle.Light
+    ).catch(() => {});
+    onAdd(item);
+  }, [item, onAdd]);
 
-  // 🆕 Notify parent of cart count changes
-  useEffect(() => {
-    const total = cart.reduce((s, i) => s + i.quantity, 0);
-    if (onCartUpdate) onCartUpdate(total);
-  }, [cart]);
+  const handleRemove = useCallback(() => {
+    Haptics.impactAsync(
+      Haptics.ImpactFeedbackStyle.Light
+    ).catch(() => {});
+    onRemove(item.id);
+  }, [item.id, onRemove]);
 
-  const fetchProducts = async () => {
-    setLoading(true);
-    try {
-      // 🔧 FIX: Use admin/producer role that can see products
-      // Regular users need a valid role to see products
-      // We pass userId and let backend handle it
-      const response = await axios.get(
-        `${API_URL}/products?user_id=${userId}`,
-        { timeout: 10000 }
-      );
-      setProducts(response.data);
-    } catch (error) {
-      // If 403 (role restriction), show all anyway
-      // via producer endpoint workaround
-      console.log('Products fetch error:', error?.response?.status);
-      setProducts([]);
-    }
-    setLoading(false);
-  };
+  const isOutOfStock = item.quantity === 0;
 
-  // 🆕 Pull to refresh
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await fetchProducts();
-    setRefreshing(false);
-  }, []);
+  return (
+    <Animated.View style={[
+      styles.productCard,
+      cartQty > 0 && styles.productCardInCart,
+      { transform: [{ scale: scaleAnim }] },
+    ]}>
 
-  // ── CART FUNCTIONS ───────────────────────
-  // 🆕 Add to cart instead of direct order
-  const addToCart = (product, qty) => {
-    const existing = cart.find(i => i.id === product.id);
-    if (existing) {
-      setCart(cart.map(i =>
-        i.id === product.id
-          ? { ...i, quantity: i.quantity + qty }
-          : i
-      ));
-    } else {
-      setCart([...cart, {
-        id: product.id,
-        name: product.name,
-        price: product.price,
-        unit: product.unit,
-        quantity: qty,
-        category: product.category,
-        image_url: product.image_url,
-        order_type: 'market', // 🔑 important!
-        product_id: product.id,
-      }]);
-    }
-  };
-
-  const cartTotal = cart.reduce(
-    (s, i) => s + i.price * i.quantity, 0
-  );
-  const cartCount = cart.reduce(
-    (s, i) => s + i.quantity, 0
-  );
-
-  // ── ORDER (Direct) ───────────────────────
-  const handleOrder = async () => {
-    if (!quantity || parseInt(quantity) < 1) return;
-    if (parseInt(quantity) > selectedProduct.quantity) {
-      Alert.alert('Not Enough Stock',
-        `Only ${selectedProduct.quantity} ${selectedProduct.unit} available`);
-      return;
-    }
-    setOrdering(true);
-    try {
-      await axios.post(
-        `${API_URL}/orders?buyer_id=${userId}`,
-        {
-          order_type: 'market',
-          product_id: selectedProduct.id,
-          quantity: parseInt(quantity),
-          delivery_address: 'Pickup at market',
-        },
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-      setOrderModal(false);
-      setOrderSuccess(true);
-      setQuantity('1');
-      fetchProducts();
-      setTimeout(() => setOrderSuccess(false), 3000);
-    } catch (error) {
-      setOrderError(true);
-      setTimeout(() => setOrderError(false), 3000);
-    }
-    setOrdering(false);
-  };
-
-  // 🆕 Place all cart orders at once
-  const handleCartCheckout = async () => {
-    if (!address.trim()) {
-      Alert.alert('Address Required',
-        'Please enter your delivery address');
-      return;
-    }
-    setOrdering(true);
-    try {
-      for (const item of cart) {
-        await axios.post(
-          `${API_URL}/orders?buyer_id=${userId}`,
-          {
-            order_type: 'market',
-            product_id: item.product_id,
-            quantity: item.quantity,
-            delivery_address: address,
-          },
-          { headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-      setCart([]);
-      setCartModal(false);
-      setAddress('');
-      setOrderSuccess(true);
-      fetchProducts();
-      setTimeout(() => setOrderSuccess(false), 3500);
-    } catch (error) {
-      Alert.alert('Order Failed',
-        'Please check your connection and try again.');
-    }
-    setOrdering(false);
-  };
-
-  // ── FILTER LOGIC ─────────────────────────
-  // 🔧 FIX: Filter handles both category AND search
-  const filteredProducts = products.filter(p => {
-    const matchCategory = selectedCategory === 'all'
-      || p.category?.toLowerCase() === selectedCategory;
-    const matchSearch = searchText.trim() === ''
-      || p.name?.toLowerCase().includes(
-           searchText.toLowerCase()
-         )
-      || p.description?.toLowerCase().includes(
-           searchText.toLowerCase()
-         );
-    return matchCategory && matchSearch;
-  });
-
-  const getCategoryEmoji = (category) => {
-    const map = {
-      seafood: '🐟', vegetables: '🥦',
-      rice: '🌾', fruits: '🍌',
-      livestock: '🐄', other: '🌿',
-    };
-    return map[category?.toLowerCase()] || '🌴';
-  };
-
-  // ── TOAST COMPONENTS ─────────────────────
-  const SuccessToast = () => orderSuccess ? (
-    <View style={styles.successToast}>
-      <Text style={styles.toastIcon}>✅</Text>
-      <Text style={styles.toastText}>
-        Order placed successfully!
-      </Text>
-    </View>
-  ) : null;
-
-  const ErrorToast = () => orderError ? (
-    <View style={[styles.successToast,
-      { backgroundColor: colors.danger }]}>
-      <Text style={styles.toastIcon}>❌</Text>
-      <Text style={styles.toastText}>
-        Order failed. Try again!
-      </Text>
-    </View>
-  ) : null;
-
-  // ── RENDER PRODUCT CARD ──────────────────
-  const renderProduct = ({ item }) => (
-    <View style={styles.productCard}>
-
-      {/* PRODUCT IMAGE or EMOJI */}
-      {item.image_url ? (
-        <Image
-          source={{ uri: item.image_url }}
-          style={styles.productImage}
-          resizeMode="cover"
-        />
-      ) : (
-        <View style={styles.productEmojiWrap}>
-          <Text style={styles.productEmoji}>
-            {getCategoryEmoji(item.category)}
-          </Text>
-        </View>
-      )}
-
-      {/* PRODUCT INFO */}
-      <View style={styles.productInfo}>
-
-        <View style={styles.productTopRow}>
-          <Text style={styles.productName} numberOfLines={1}>
-            {item.name}
-          </Text>
-          <View style={styles.categoryTag}>
-            <Text style={styles.categoryTagText}>
-              {item.category || 'General'}
-            </Text>
-          </View>
-        </View>
-
-        {item.description ? (
-          <Text style={styles.productDesc} numberOfLines={2}>
-            {item.description}
-          </Text>
-        ) : null}
-
-        {/* RATING */}
-        {item.rating > 0 && (
-          <View style={styles.ratingRow}>
-            <Text style={styles.ratingStars}>
-              {'⭐'.repeat(Math.round(item.rating))}
-            </Text>
-            <Text style={styles.ratingText}>
-              {item.rating} ({item.total_reviews})
+      {/* Image */}
+      <View style={styles.productImgWrap}>
+        {item.image_url ? (
+          <Image
+            source={{ uri: item.image_url }}
+            style={styles.productImg}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={styles.productImgPlaceholder}>
+            <Text style={styles.productImgEmoji}>
+              🌾
             </Text>
           </View>
         )}
 
-        <View style={styles.productBottomRow}>
-          <View>
-            <Text style={styles.productPrice}>
-              ₱{item.price}
-              <Text style={styles.productUnit}>
-                /{item.unit}
-              </Text>
-            </Text>
-            <Text style={[
-              styles.productStock,
-              item.quantity < 10 && { color: colors.danger }
-            ]}>
-              📦 {item.quantity} {item.unit} left
-              {item.quantity < 10 ? ' ⚠️' : ''}
+        {/* Badges */}
+        {cartQty > 0 && (
+          <View style={styles.inCartBadge}>
+            <Text style={styles.inCartBadgeText}>
+              ✓ {cartQty} in cart
             </Text>
           </View>
+        )}
 
-          {/* 🆕 Two buttons: Add to Cart + Quick Order */}
-          <View style={styles.productBtns}>
-            <TouchableOpacity
-              style={[
-                styles.cartAddBtn,
-                item.quantity === 0 && styles.btnDisabled,
-              ]}
-              disabled={item.quantity === 0}
-              onPress={() => {
-                addToCart(item, 1);
-                // Quick feedback
-                Alert.alert('', `${item.name} added to cart! 🛒`,
-                  [{ text: 'OK' }],
-                  { cancelable: true }
-                );
-              }}>
-              <Text style={styles.cartAddBtnText}>
-                {item.quantity === 0 ? '❌' : '🛒'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.orderBtn,
-                item.quantity === 0 && styles.btnDisabled,
-              ]}
-              disabled={item.quantity === 0}
-              onPress={() => {
-                setSelectedProduct(item);
-                setQuantity('1');
-                setOrderModal(true);
-              }}>
-              <Text style={styles.orderBtnText}>
-                {item.quantity === 0 ? 'Sold Out' : 'Order →'}
-              </Text>
-            </TouchableOpacity>
+        {isOutOfStock && (
+          <View style={styles.outOfStockBadge}>
+            <Text style={styles.outOfStockText}>
+              Out of Stock
+            </Text>
           </View>
+        )}
+
+        {/* Market type badge */}
+        <View style={[
+          styles.marketTypeBadge,
+          item.market_type === 'wholesale'
+            ? styles.wholesaleBadge
+            : styles.retailBadge,
+        ]}>
+          <Text style={styles.marketTypeBadgeText}>
+            {item.market_type === 'wholesale'
+              ? '📦 Wholesale'
+              : '🛒 Retail'}
+          </Text>
+        </View>
+      </View>
+
+      {/* Info */}
+      <View style={styles.productInfo}>
+        <Text
+          style={styles.productName}
+          numberOfLines={2}>
+          {item.name}
+        </Text>
+
+        {item.description ? (
+          <Text
+            style={styles.productDesc}
+            numberOfLines={2}>
+            {item.description}
+          </Text>
+        ) : null}
+
+        {/* Location */}
+        {(item.barangay || item.municipality) && (
+          <Text style={styles.productLocation}>
+            📍 {[item.barangay, item.municipality]
+              .filter(Boolean).join(', ')}
+          </Text>
+        )}
+
+        {/* Price & Unit */}
+        <View style={styles.priceRow}>
+          <Text style={styles.productPrice}>
+            ₱{item.price}
+          </Text>
+          <Text style={styles.productUnit}>
+            /{item.unit}
+          </Text>
         </View>
 
+        {/* Stock */}
+        <Text style={[
+          styles.stockText,
+          item.quantity < 10 && styles.stockLow,
+        ]}>
+          {isOutOfStock
+            ? '❌ Out of stock'
+            : item.quantity < 10
+              ? `⚠️ Only ${item.quantity} left`
+              : `✅ ${item.quantity} available`}
+        </Text>
+
+        {/* Rating */}
+        {item.rating > 0 && (
+          <View style={styles.ratingRow}>
+            <Text style={styles.ratingStar}>⭐</Text>
+            <Text style={styles.ratingText}>
+              {item.rating.toFixed(1)}
+            </Text>
+            {item.total_reviews > 0 && (
+              <Text style={styles.ratingCount}>
+                ({item.total_reviews})
+              </Text>
+            )}
+          </View>
+        )}
+
+        {/* Action buttons */}
+        <View style={styles.actionRow}>
+          {cartQty > 0 ? (
+            <>
+              <TouchableOpacity
+                style={styles.removeBtn}
+                onPress={handleRemove}
+                activeOpacity={0.8}>
+                <Text style={styles.removeBtnText}>
+                  🗑️
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.addMoreBtn}
+                onPress={handleAdd}
+                disabled={isOutOfStock}
+                activeOpacity={0.85}>
+                <Text style={styles.addMoreBtnText}>
+                  + Add More
+                </Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.addBtn,
+                isOutOfStock && styles.addBtnDisabled,
+              ]}
+              onPress={handleAdd}
+              disabled={isOutOfStock}
+              activeOpacity={0.85}>
+              <Text style={styles.addBtnText}>
+                {isOutOfStock ? 'Out of Stock' : '+ Add to Cart'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
-    </View>
+    </Animated.View>
+  );
+}
+
+// ============================================
+// MAIN MARKET SCREEN
+// ============================================
+export default function MarketScreen({
+  userId,
+  userRole,
+  onBack,
+  onCartUpdate,
+  onGoToDashboard,
+}) {
+  const [products, setProducts]     = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedCat, setSelectedCat] = useState('All');
+  const [searchText, setSearchText] = useState('');
+  const [cart, setCart]             = useState([]);
+  const [showCart, setShowCart]     = useState(false);
+
+  // Cart animation
+  const cartBounce = useRef(new Animated.Value(1)).current;
+  const cartAnim   = useRef(new Animated.Value(0)).current;
+
+  const {
+    persistedCart,
+    cartLoaded,
+    saveCart,
+    setCartCount,
+  } = useAppContext();
+
+  // ── RESTORE CART ────────────────────────────
+  useEffect(() => {
+    if (!cartLoaded) return;
+    const marketCart = persistedCart.filter(
+      i => i.order_type === 'market' || i.product_id
+    );
+    if (marketCart.length > 0) {
+      setCart(marketCart);
+    }
+  }, [cartLoaded]);
+
+  // ── CART ANIMATION ───────────────────────────
+  useEffect(() => {
+    const count = cart.reduce(
+      (s, i) => s + i.quantity, 0
+    );
+
+    if (count > 0) {
+      Animated.sequence([
+        Animated.spring(cartBounce, {
+          toValue:         1.3,
+          friction:        3,
+          useNativeDriver: true,
+        }),
+        Animated.spring(cartBounce, {
+          toValue:         1,
+          friction:        4,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+
+    Animated.spring(cartAnim, {
+      toValue:         count > 0 ? 1 : 0,
+      friction:        8,
+      useNativeDriver: true,
+    }).start();
+
+    // Update global cart count
+    onCartUpdate?.(count);
+    setCartCount(count);
+
+  }, [cart]);
+
+  // ── FETCH PRODUCTS ───────────────────────────
+  const fetchProducts = useCallback(async () => {
+    try {
+      const res = await axios.get(
+        `${API_URL}/products`,
+        {
+          params:  { user_id: userId },
+          timeout: 10000,
+        }
+      );
+      setProducts(res.data || []);
+    } catch (err) {
+      if (__DEV__) console.log('Products error:', err?.message);
+      setProducts([]);
+      showToast(
+        'error',
+        'Could not load products',
+        'Pull down to retry'
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchProducts();
+  }, [fetchProducts]);
+
+  // ── CART FUNCTIONS ───────────────────────────
+  const addToCart = useCallback((item) => {
+    setCart(prev => {
+      const existing = prev.find(
+        c => c.id === item.id
+      );
+      let updated;
+      if (existing) {
+        updated = prev.map(c =>
+          c.id === item.id
+            ? { ...c, quantity: c.quantity + 1 }
+            : c
+        );
+      } else {
+        updated = [...prev, {
+          ...item,
+          quantity:   1,
+          order_type: 'market',
+          product_id: item.id,
+        }];
+      }
+      saveCart(updated);
+      return updated;
+    });
+  }, [saveCart]);
+
+  const removeFromCart = useCallback((id) => {
+    setCart(prev => {
+      const updated = prev.filter(c => c.id !== id);
+      saveCart(updated);
+      return updated;
+    });
+  }, [saveCart]);
+
+  const clearCart = useCallback(() => {
+    setCart([]);
+    saveCart([]);
+  }, [saveCart]);
+
+  // ── COMPUTED (memoized) ──────────────────────
+  const cartCount = useMemo(() =>
+    cart.reduce((s, i) => s + i.quantity, 0),
+    [cart]
   );
 
-  // ============================================
-  // MAIN RENDER
-  // ============================================
+  const cartTotal = useMemo(() =>
+    cart.reduce(
+      (s, i) => s + i.price * i.quantity, 0
+    ),
+    [cart]
+  );
+
+  const filteredProducts = useMemo(() => {
+    return products.filter(p => {
+      const matchCat = selectedCat === 'All' ||
+        p.category === selectedCat;
+      const matchSearch = !searchText.trim() ||
+        p.name?.toLowerCase().includes(
+          searchText.toLowerCase()
+        ) ||
+        p.description?.toLowerCase().includes(
+          searchText.toLowerCase()
+        );
+      return matchCat && matchSearch;
+    });
+  }, [products, selectedCat, searchText]);
+
+  // ── RENDER PRODUCT ───────────────────────────
+  const renderProduct = useCallback(({ item }) => {
+    const cartItem = cart.find(c => c.id === item.id);
+    return (
+      <ProductCard
+        item={item}
+        cartQty={cartItem?.quantity || 0}
+        onAdd={addToCart}
+        onRemove={removeFromCart}
+      />
+    );
+  }, [cart, addToCart, removeFromCart]);
+
+  const keyExtractor = useCallback(
+    (item) => item.id.toString(), []
+  );
+
+  // ── CART SCREEN ──────────────────────────────
+  if (showCart) {
+    return (
+      <CartScreen
+        cart={cart}
+        setCart={setCart}
+        userId={userId}
+        onBack={() => setShowCart(false)}
+        onOrderPlaced={() => {
+          setShowCart(false);
+          clearCart();
+          showToast(
+            'success',
+            'Order Placed! 🎉',
+            'Your order is being processed!'
+          );
+        }}
+      />
+    );
+  }
+
+  // ── MAIN RENDER ──────────────────────────────
   return (
     <View style={styles.container}>
       <StatusBar
@@ -361,451 +461,243 @@ export default function MarketScreen({
         barStyle="light-content"
       />
 
-      {/* TOASTS */}
-      <SuccessToast />
-      <ErrorToast />
-
-      {/* ── HEADER ── */}
+      {/* HEADER */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <TouchableOpacity
             style={styles.backBtn}
-            onPress={onBack}>
-            <Text style={styles.backBtnText}>← Back</Text>
+            onPress={onBack}
+            activeOpacity={0.8}>
+            <Text style={styles.backBtnText}>←</Text>
           </TouchableOpacity>
+
           <Text style={styles.headerBrand}>ZAVARA</Text>
+
           <TouchableOpacity
-            style={styles.refreshBtn}
-            onPress={fetchProducts}>
-            <Text style={styles.refreshBtnText}>↻</Text>
+            style={styles.cartBtn}
+            onPress={() => setShowCart(true)}
+            activeOpacity={0.8}>
+            <Animated.Text style={[
+              styles.cartBtnIcon,
+              { transform: [{ scale: cartBounce }] },
+            ]}>
+              🛒
+            </Animated.Text>
+            {cartCount > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>
+                  {cartCount > 9 ? '9+' : cartCount}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
+
         <Text style={styles.headerTitle}>
-          🌾 Harvest Market
+          🌾 Market
         </Text>
         <Text style={styles.headerSub}>
-          Fresh from Bohol's producers
+          {userRole === 'regular'
+            ? 'Fresh products from local producers'
+            : userRole === 'producer'
+              ? 'Wholesale market'
+              : 'Market'}
         </Text>
+
+        {/* Producer dashboard shortcut */}
+        {['producer', 'admin'].includes(userRole) && (
+          <TouchableOpacity
+            style={styles.dashShortcut}
+            onPress={onGoToDashboard}
+            activeOpacity={0.85}>
+            <Text style={styles.dashShortcutText}>
+              🌾 My Dashboard →
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* ── SEARCH BAR ── */}
-      {/* 🔧 FIX: Now actually functional! */}
+      {/* SEARCH */}
       <View style={styles.searchWrap}>
         <View style={styles.searchBar}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
             style={styles.searchInput}
             placeholder="Search products..."
-            placeholderTextColor={colors.textLight}
+            placeholderTextColor={colors.textMuted}
             value={searchText}
             onChangeText={setSearchText}
             returnKeyType="search"
+            autoCorrect={false}
           />
           {searchText.length > 0 && (
             <TouchableOpacity
-              onPress={() => setSearchText('')}>
+              onPress={() => setSearchText('')}
+              style={{ padding: 4 }}>
               <Text style={styles.searchClear}>✕</Text>
             </TouchableOpacity>
           )}
         </View>
       </View>
 
-      {/* ── CATEGORIES ── */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.categoryScroll}
-        contentContainerStyle={styles.categoryContent}>
-        {categories.map((cat) => (
-          <TouchableOpacity
-            key={cat.id}
-            style={[
-              styles.categoryChip,
-              selectedCategory === cat.id &&
-              styles.categoryChipActive,
-            ]}
-            onPress={() => setSelectedCategory(cat.id)}>
-            <Text style={[
-              styles.categoryChipText,
-              selectedCategory === cat.id &&
-              styles.categoryChipTextActive,
-            ]}>
-              {cat.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {/* CATEGORIES */}
+      <View style={styles.catWrap}>
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          data={CATEGORIES}
+          keyExtractor={(item) => item}
+          contentContainerStyle={styles.catList}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[
+                styles.catChip,
+                selectedCat === item &&
+                styles.catChipActive,
+              ]}
+              onPress={() => {
+                Haptics.impactAsync(
+                  Haptics.ImpactFeedbackStyle.Light
+                ).catch(() => {});
+                setSelectedCat(item);
+              }}
+              activeOpacity={0.8}>
+              <Text style={[
+                styles.catChipText,
+                selectedCat === item &&
+                styles.catChipTextActive,
+              ]}>
+                {item}
+              </Text>
+            </TouchableOpacity>
+          )}
+        />
+      </View>
 
-      {/* ── COUNT ROW ── */}
+      {/* RESULTS COUNT */}
       {!loading && (
-        <View style={styles.countRow}>
-          <Text style={styles.countText}>
-            {filteredProducts.length} products
-            {searchText ? ` for "${searchText}"` : ' available'}
+        <View style={styles.resultsRow}>
+          <Text style={styles.resultsText}>
+            {filteredProducts.length} product
+            {filteredProducts.length !== 1 ? 's' : ''}
           </Text>
-          <View style={styles.freshBadge}>
-            <Text style={styles.freshBadgeText}>
-              ✦ FRESH TODAY
-            </Text>
-          </View>
+          {cartCount > 0 && (
+            <TouchableOpacity
+              onPress={() => setShowCart(true)}>
+              <Text style={styles.viewCartLink}>
+                View Cart ({cartCount}) →
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
-      {/* ── PRODUCT LIST ── */}
+      {/* PRODUCT LIST */}
       {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator
             size="large"
-            color={colors.primary}
+            color={colors.farmerColor}
           />
           <Text style={styles.loadingText}>
-            Loading fresh products...
+            Loading products...
           </Text>
         </View>
       ) : (
         <FlatList
           data={filteredProducts}
+          keyExtractor={keyExtractor}
           renderItem={renderProduct}
-          keyExtractor={(item) => item.id.toString()}
+          numColumns={2}
+          columnWrapperStyle={styles.columnWrapper}
           contentContainerStyle={styles.productList}
           showsVerticalScrollIndicator={false}
-          // 🆕 Pull to refresh
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          initialNumToRender={6}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              colors={[colors.primary]}
-              tintColor={colors.primary}
+              colors={[colors.farmerColor]}
+              tintColor={colors.farmerColor}
             />
           }
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <Text style={styles.emptyIcon}>🌾</Text>
               <Text style={styles.emptyTitle}>
-                {searchText
-                  ? 'No Results Found'
-                  : 'No Products Yet'}
+                No Products Found
               </Text>
               <Text style={styles.emptySub}>
                 {searchText
-                  ? `No products match "${searchText}"`
-                  : 'Check back soon for fresh\nproducts from local producers!'}
+                  ? `No results for "${searchText}"`
+                  : 'No products available right now'}
               </Text>
-              {searchText ? (
+              {(searchText || selectedCat !== 'All') && (
                 <TouchableOpacity
-                  style={styles.clearSearchBtn}
-                  onPress={() => setSearchText('')}>
-                  <Text style={styles.clearSearchBtnText}>
-                    Clear Search
+                  style={styles.clearBtn}
+                  onPress={() => {
+                    setSearchText('');
+                    setSelectedCat('All');
+                  }}>
+                  <Text style={styles.clearBtnText}>
+                    Clear Filters
                   </Text>
                 </TouchableOpacity>
-              ) : null}
+              )}
             </View>
           }
         />
       )}
 
-      {/* 🆕 FLOATING CART BUTTON */}
-      {cartCount > 0 && (
+      {/* FLOATING CART */}
+      <Animated.View style={[
+        styles.floatingCartWrap,
+        {
+          transform: [{
+            translateY: cartAnim.interpolate({
+              inputRange:  [0, 1],
+              outputRange: [120, 0],
+            }),
+          }],
+          opacity: cartAnim,
+        },
+      ]}>
         <TouchableOpacity
           style={styles.floatingCart}
-          onPress={() => setCartModal(true)}>
+          onPress={() => setShowCart(true)}
+          activeOpacity={0.9}>
           <View style={styles.floatingCartLeft}>
-            <View style={styles.floatingCartBadge}>
+            <Animated.View style={[
+              styles.floatingCartBadge,
+              { transform: [{ scale: cartBounce }] },
+            ]}>
               <Text style={styles.floatingCartBadgeText}>
                 {cartCount}
               </Text>
+            </Animated.View>
+            <View>
+              <Text style={styles.floatingCartLabel}>
+                View Cart
+              </Text>
+              <Text style={styles.floatingCartSub}>
+                {cartCount} item
+                {cartCount !== 1 ? 's' : ''}
+              </Text>
             </View>
-            <Text style={styles.floatingCartText}>
-              View Cart
+          </View>
+          <View style={styles.floatingCartRight}>
+            <Text style={styles.floatingCartTotal}>
+              ₱{cartTotal.toFixed(2)}
+            </Text>
+            <Text style={styles.floatingCartArrow}>
+              →
             </Text>
           </View>
-          <Text style={styles.floatingCartTotal}>
-            ₱{cartTotal.toFixed(2)} →
-          </Text>
         </TouchableOpacity>
-      )}
-
-      {/* ── ORDER MODAL (Single Product) ── */}
-      <Modal
-        visible={orderModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setOrderModal(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-
-            {/* HANDLE */}
-            <View style={styles.modalHandle} />
-
-            {/* TITLE */}
-            <View style={styles.modalTitleRow}>
-              <Text style={styles.modalTitle}>
-                Place Order
-              </Text>
-              <TouchableOpacity
-                style={styles.modalCloseBtn}
-                onPress={() => {
-                  setOrderModal(false);
-                  setQuantity('1');
-                }}>
-                <Text style={styles.modalCloseBtnText}>
-                  ✕
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* PRODUCT INFO */}
-            <View style={styles.modalProductCard}>
-              {selectedProduct?.image_url ? (
-                <Image
-                  source={{ uri: selectedProduct.image_url }}
-                  style={styles.modalProductImage}
-                  resizeMode="cover"
-                />
-              ) : (
-                <View style={styles.modalProductEmoji}>
-                  <Text style={{ fontSize: 36 }}>
-                    {getCategoryEmoji(
-                      selectedProduct?.category
-                    )}
-                  </Text>
-                </View>
-              )}
-              <View style={styles.modalProductInfo}>
-                <Text style={styles.modalProductName}>
-                  {selectedProduct?.name}
-                </Text>
-                <Text style={styles.modalProductPrice}>
-                  ₱{selectedProduct?.price} per{' '}
-                  {selectedProduct?.unit}
-                </Text>
-                <Text style={styles.modalProductStock}>
-                  📦 {selectedProduct?.quantity}{' '}
-                  {selectedProduct?.unit} available
-                </Text>
-              </View>
-            </View>
-
-            {/* QUICK ACTION: Add to Cart */}
-            <TouchableOpacity
-              style={styles.addToCartBtn}
-              onPress={() => {
-                addToCart(
-                  selectedProduct,
-                  parseInt(quantity) || 1
-                );
-                setOrderModal(false);
-                setQuantity('1');
-              }}>
-              <Text style={styles.addToCartBtnText}>
-                🛒 ADD TO CART
-              </Text>
-            </TouchableOpacity>
-
-            {/* DIVIDER */}
-            <View style={styles.orDivider}>
-              <View style={styles.orLine} />
-              <Text style={styles.orText}>or order now</Text>
-              <View style={styles.orLine} />
-            </View>
-
-            {/* QUANTITY */}
-            <Text style={styles.modalLabel}>QUANTITY</Text>
-            <View style={styles.qtyRow}>
-              <TouchableOpacity
-                style={styles.qtyBtn}
-                onPress={() => {
-                  const q = parseInt(quantity) || 1;
-                  if (q > 1) setQuantity((q-1).toString());
-                }}>
-                <Text style={styles.qtyBtnText}>−</Text>
-              </TouchableOpacity>
-              <TextInput
-                style={styles.qtyInput}
-                value={quantity}
-                onChangeText={(v) => {
-                  // 🔧 Validate input
-                  const n = parseInt(v);
-                  if (!isNaN(n) && n > 0 &&
-                    n <= selectedProduct?.quantity) {
-                    setQuantity(v);
-                  }
-                }}
-                keyboardType="numeric"
-                textAlign="center"
-              />
-              <TouchableOpacity
-                style={[styles.qtyBtn, styles.qtyBtnPlus]}
-                onPress={() => {
-                  const q = parseInt(quantity) || 1;
-                  if (q < (selectedProduct?.quantity || 0)) {
-                    setQuantity((q+1).toString());
-                  }
-                }}>
-                <Text style={[styles.qtyBtnText,
-                  { color: colors.textWhite }]}>
-                  +
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* TOTAL */}
-            <View style={styles.modalTotalCard}>
-              <Text style={styles.modalTotalLabel}>
-                TOTAL AMOUNT
-              </Text>
-              <Text style={styles.modalTotalValue}>
-                ₱{(
-                  (selectedProduct?.price || 0) *
-                  (parseInt(quantity) || 0)
-                ).toFixed(2)}
-              </Text>
-            </View>
-
-            {/* BUTTONS */}
-            {ordering ? (
-              <ActivityIndicator
-                size="large"
-                color={colors.primary}
-                style={{ marginVertical: 20 }}
-              />
-            ) : (
-              <View style={styles.modalBtns}>
-                <TouchableOpacity
-                  style={styles.cancelBtn}
-                  onPress={() => {
-                    setOrderModal(false);
-                    setQuantity('1');
-                  }}>
-                  <Text style={styles.cancelBtnText}>
-                    Cancel
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.confirmBtn}
-                  onPress={handleOrder}>
-                  <Text style={styles.confirmBtnText}>
-                    🌾 CONFIRM ORDER
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-          </View>
-        </View>
-      </Modal>
-
-      {/* 🆕 CART MODAL */}
-      <Modal
-        visible={cartModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setCartModal(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent,
-            { maxHeight: '90%' }]}>
-            <View style={styles.modalHandle} />
-
-            <View style={styles.modalTitleRow}>
-              <Text style={styles.modalTitle}>
-                🛒 My Cart ({cartCount})
-              </Text>
-              <TouchableOpacity
-                style={styles.modalCloseBtn}
-                onPress={() => setCartModal(false)}>
-                <Text style={styles.modalCloseBtnText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={{ maxHeight: 300 }}
-              showsVerticalScrollIndicator={false}>
-              {cart.map((item) => (
-                <View key={item.id}
-                  style={styles.cartItemRow}>
-                  <Text style={styles.cartItemEmoji}>
-                    {getCategoryEmoji(item.category)}
-                  </Text>
-                  <View style={styles.cartItemInfo}>
-                    <Text style={styles.cartItemName}
-                      numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                    <Text style={styles.cartItemPrice}>
-                      ₱{item.price} × {item.quantity}
-                    </Text>
-                  </View>
-                  <Text style={styles.cartItemTotal}>
-                    ₱{(item.price * item.quantity).toFixed(2)}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setCart(cart.filter(i =>
-                        i.id !== item.id
-                      ));
-                    }}>
-                    <Text style={styles.cartItemRemove}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </ScrollView>
-
-            {/* ADDRESS INPUT */}
-            <Text style={[styles.modalLabel,
-              { marginTop: 16 }]}>
-              DELIVERY ADDRESS
-            </Text>
-            <View style={styles.addressInput}>
-              <Text style={{ fontSize: 18 }}>📍</Text>
-              <TextInput
-                style={styles.addressTextInput}
-                placeholder="Enter delivery address..."
-                placeholderTextColor={colors.textMuted}
-                value={address}
-                onChangeText={setAddress}
-                multiline
-              />
-            </View>
-
-            {/* TOTAL */}
-            <View style={styles.modalTotalCard}>
-              <Text style={styles.modalTotalLabel}>
-                CART TOTAL
-              </Text>
-              <Text style={styles.modalTotalValue}>
-                ₱{cartTotal.toFixed(2)}
-              </Text>
-            </View>
-
-            {/* CHECKOUT */}
-            {ordering ? (
-              <ActivityIndicator
-                size="large"
-                color={colors.primary}
-              />
-            ) : (
-              <View style={styles.modalBtns}>
-                <TouchableOpacity
-                  style={styles.cancelBtn}
-                  onPress={() => setCartModal(false)}>
-                  <Text style={styles.cancelBtnText}>
-                    Continue Shopping
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.confirmBtn}
-                  onPress={handleCartCheckout}>
-                  <Text style={styles.confirmBtnText}>
-                    🚀 CHECKOUT
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-          </View>
-        </View>
-      </Modal>
+      </Animated.View>
 
     </View>
   );
@@ -817,694 +709,487 @@ export default function MarketScreen({
 const styles = StyleSheet.create({
 
   container: {
-    flex: 1,
+    flex:            1,
     backgroundColor: colors.background,
   },
 
-  // ── TOAST ───────────────────────────────
-  successToast: {
-    position: 'absolute',
-    top: 60,
-    left: 20,
-    right: 20,
-    backgroundColor: colors.success,
-    borderRadius: borderRadius.large,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    zIndex: 999,
-    ...shadowStrong,
-  },
-  toastIcon: { fontSize: 20 },
-  toastText: {
-    color: colors.textWhite,
-    fontWeight: '800',
-    fontSize: 14,
-    flex: 1,
-  },
-
-  // ── HEADER ──────────────────────────────
+  // ── HEADER ──────────────────────────────────
   header: {
-    backgroundColor: colors.dark,
-    paddingTop: 52,
-    paddingBottom: 20,
+    backgroundColor:  colors.dark,
+    paddingTop:       52,
+    paddingBottom:    16,
     paddingHorizontal: 20,
-    ...shadowDark,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderGold,
+    ...shadowMd,
   },
   headerTop: {
-    flexDirection: 'row',
+    flexDirection:  'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
+    alignItems:     'center',
+    marginBottom:   12,
   },
-  backBtn: { minWidth: 60 },
+  backBtn: {
+    width:           38,
+    height:          38,
+    borderRadius:    12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems:      'center',
+    justifyContent:  'center',
+    borderWidth:     1,
+    borderColor:     'rgba(255,255,255,0.12)',
+  },
   backBtnText: {
-    color: colors.primary,
-    fontSize: 14,
+    color:      colors.textWhite,
+    fontSize:   18,
     fontWeight: '700',
   },
   headerBrand: {
-    color: colors.primaryLight,
-    fontSize: 14,
+    color:         colors.primary,
+    fontSize:      14,
+    fontWeight:    '900',
+    letterSpacing: 4,
+  },
+  cartBtn: {
+    width:           38,
+    height:          38,
+    borderRadius:    12,
+    backgroundColor: colors.primaryPale,
+    alignItems:      'center',
+    justifyContent:  'center',
+    borderWidth:     1,
+    borderColor:     colors.borderGold,
+    position:        'relative',
+  },
+  cartBtnIcon: { fontSize: 18 },
+  cartBadge: {
+    position:        'absolute',
+    top:             -4,
+    right:           -4,
+    minWidth:        18,
+    height:          18,
+    borderRadius:    9,
+    backgroundColor: colors.danger,
+    alignItems:      'center',
+    justifyContent:  'center',
+    borderWidth:     1.5,
+    borderColor:     colors.cardBackground,
+    paddingHorizontal: 3,
+  },
+  cartBadgeText: {
+    color:      colors.textWhite,
+    fontSize:   9,
     fontWeight: '900',
-    letterSpacing: 3,
-  },
-  refreshBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: colors.darkCard,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.borderGold,
-  },
-  refreshBtnText: {
-    color: colors.primary,
-    fontSize: 18,
-    fontWeight: '700',
   },
   headerTitle: {
-    color: colors.textCream,
-    fontSize: 26,
+    color:      colors.textWhite,
+    fontSize:   26,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    marginBottom: 4,
   },
   headerSub: {
-    color: colors.textLight,
+    color:    'rgba(255,255,255,0.45)',
     fontSize: 12,
-    marginTop: 3,
+  },
+  dashShortcut: {
+    marginTop:       10,
+    backgroundColor: colors.farmerBg,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius:    borderRadius.large,
+    alignSelf:       'flex-start',
+    borderWidth:     1,
+    borderColor:     colors.farmerBorder,
+  },
+  dashShortcutText: {
+    color:      colors.farmerColor,
+    fontSize:   12,
+    fontWeight: '800',
   },
 
-  // ── SEARCH ──────────────────────────────
+  // ── SEARCH ──────────────────────────────────
   searchWrap: {
-    backgroundColor: colors.dark,
     paddingHorizontal: 20,
-    paddingBottom: 16,
-  },
-  searchBar: {
-    backgroundColor: colors.darkCard,
-    borderRadius: borderRadius.large,
-    padding: 13,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.borderGold,
-    gap: 10,
-  },
-  searchIcon: { fontSize: 16 },
-  // 🆕 Actual TextInput for search
-  searchInput: {
-    flex: 1,
-    color: colors.textCream,
-    fontSize: 13,
-    paddingVertical: 0,
-  },
-  searchClear: {
-    color: colors.textLight,
-    fontSize: 14,
-    fontWeight: '700',
-    paddingHorizontal: 4,
-  },
-
-  // ── CATEGORIES ──────────────────────────
-  categoryScroll: {
-    backgroundColor: colors.cardBackground,
+    paddingVertical:   12,
+    backgroundColor:   colors.cardBackground,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
-    maxHeight: 56,
   },
-  categoryContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    gap: 8,
-  },
-  categoryChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: borderRadius.round,
+  searchBar: {
     backgroundColor: colors.inputBackground,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius:    borderRadius.large,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection:   'row',
+    alignItems:      'center',
+    borderWidth:     1,
+    borderColor:     colors.border,
+    gap:             10,
   },
-  categoryChipActive: {
-    backgroundColor: colors.farmerColor,
-    borderColor: colors.farmerColor,
+  searchIcon:  { fontSize: 16 },
+  searchInput: {
+    flex:     1,
+    fontSize: 14,
+    color:    colors.textDark,
+    padding:  0,
   },
-  categoryChipText: {
-    fontSize: 11,
-    color: colors.textMedium,
+  searchClear: {
+    color:      colors.textMuted,
+    fontSize:   14,
     fontWeight: '700',
   },
-  categoryChipTextActive: {
-    color: colors.textWhite,
+
+  // ── CATEGORIES ──────────────────────────────
+  catWrap: {
+    backgroundColor:   colors.cardBackground,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  catList: {
+    paddingHorizontal: 16,
+    paddingVertical:   10,
+    gap:               8,
+  },
+  catChip: {
+    paddingHorizontal: 16,
+    paddingVertical:   8,
+    borderRadius:      borderRadius.round,
+    backgroundColor:   colors.inputBackground,
+    borderWidth:       1,
+    borderColor:       colors.border,
+  },
+  catChipActive: {
+    backgroundColor: colors.farmerColor,
+    borderColor:     colors.farmerColor,
+  },
+  catChipText: {
+    fontSize:   12,
+    color:      colors.textMedium,
+    fontWeight: '700',
+  },
+  catChipTextActive: {
+    color:      colors.textWhite,
     fontWeight: '900',
   },
 
-  // ── COUNT ROW ───────────────────────────
-  countRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  // ── RESULTS ─────────────────────────────────
+  resultsRow: {
+    flexDirection:     'row',
+    justifyContent:    'space-between',
+    alignItems:        'center',
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical:   10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor:   colors.cardBackground,
   },
-  countText: {
-    color: colors.textMedium,
-    fontSize: 12,
+  resultsText: {
+    color:      colors.textLight,
+    fontSize:   12,
     fontWeight: '600',
   },
-  freshBadge: {
-    backgroundColor: colors.farmerBg,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: borderRadius.round,
-    borderWidth: 1,
-    borderColor: colors.farmerColor + '40',
-  },
-  freshBadgeText: {
-    color: colors.farmerColor,
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 1,
+  viewCartLink: {
+    color:      colors.farmerColor,
+    fontSize:   12,
+    fontWeight: '800',
   },
 
-  // ── LOADING ─────────────────────────────
+  // ── LOADING ─────────────────────────────────
   loadingWrap: {
-    flex: 1,
-    alignItems: 'center',
+    flex:           1,
+    alignItems:     'center',
     justifyContent: 'center',
-    gap: 12,
+    gap:            14,
   },
   loadingText: {
-    color: colors.textLight,
-    fontSize: 13,
+    color:      colors.textLight,
+    fontSize:   13,
     fontWeight: '600',
   },
 
-  // ── PRODUCT LIST ────────────────────────
+  // ── PRODUCT LIST ────────────────────────────
   productList: {
-    padding: 16,
-    paddingBottom: 100, // space for floating cart
+    padding:       12,
+    paddingBottom: 120,
+  },
+  columnWrapper: {
+    gap: 12,
   },
 
-  // ── PRODUCT CARD ────────────────────────
+  // ── PRODUCT CARD ────────────────────────────
   productCard: {
+    flex:            1,
     backgroundColor: colors.cardBackground,
-    borderRadius: borderRadius.xlarge,
-    padding: 16,
-    marginBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.farmerColor,
-    gap: 14,
+    borderRadius:    borderRadius.xlarge,
+    marginBottom:    12,
+    overflow:        'hidden',
+    borderWidth:     1,
+    borderColor:     colors.border,
     ...shadow,
   },
-  // 🆕 Image support
-  productImage: {
-    width: 70,
-    height: 70,
-    borderRadius: 16,
+  productCardInCart: {
+    borderColor:     colors.farmerColor + '50',
+    backgroundColor: colors.farmerBg + '20',
+  },
+  productImgWrap: {
+    height:   140,
+    position: 'relative',
+  },
+  productImg: {
+    width:  '100%',
+    height: '100%',
+  },
+  productImgPlaceholder: {
+    width:           '100%',
+    height:          '100%',
     backgroundColor: colors.farmerBg,
+    alignItems:      'center',
+    justifyContent:  'center',
   },
-  productEmojiWrap: {
-    width: 70,
-    height: 70,
-    borderRadius: 18,
-    backgroundColor: colors.farmerBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.farmerColor + '30',
-  },
-  productEmoji: { fontSize: 32 },
-  productInfo: { flex: 1 },
-  productTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 5,
-    gap: 8,
-  },
-  productName: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: colors.textDark,
-    flex: 1,
-  },
-  categoryTag: {
-    backgroundColor: colors.farmerBg,
+  productImgEmoji: { fontSize: 44 },
+  inCartBadge: {
+    position:        'absolute',
+    top:             8,
+    left:            8,
+    backgroundColor: colors.farmerColor,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: borderRadius.small,
-    borderWidth: 1,
-    borderColor: colors.farmerColor + '30',
+    borderRadius:    borderRadius.round,
   },
-  categoryTagText: {
-    color: colors.farmerColor,
-    fontSize: 9,
+  inCartBadgeText: {
+    color:      colors.textWhite,
+    fontSize:   9,
     fontWeight: '900',
-    textTransform: 'capitalize',
+  },
+  outOfStockBadge: {
+    position:        'absolute',
+    top:             0,
+    left:            0,
+    right:           0,
+    bottom:          0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems:      'center',
+    justifyContent:  'center',
+  },
+  outOfStockText: {
+    color:      colors.textWhite,
+    fontSize:   13,
+    fontWeight: '900',
+  },
+  marketTypeBadge: {
+    position:        'absolute',
+    bottom:          8,
+    right:           8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius:    borderRadius.round,
+  },
+  wholesaleBadge: {
+    backgroundColor: colors.riderBg,
+  },
+  retailBadge: {
+    backgroundColor: colors.farmerBg,
+  },
+  marketTypeBadgeText: {
+    fontSize:   9,
+    fontWeight: '800',
+    color:      colors.textDark,
+  },
+  productInfo: {
+    padding: 12,
+    gap:     4,
+  },
+  productName: {
+    color:      colors.textDark,
+    fontSize:   13,
+    fontWeight: '800',
+    lineHeight: 18,
   },
   productDesc: {
-    fontSize: 11,
-    color: colors.textLight,
-    lineHeight: 16,
-    marginBottom: 6,
+    color:      colors.textLight,
+    fontSize:   10,
+    lineHeight: 14,
   },
-  // 🆕 Rating
-  ratingRow: {
+  productLocation: {
+    color:    colors.textMuted,
+    fontSize: 9,
+  },
+  priceRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-  },
-  ratingStars: { fontSize: 10 },
-  ratingText: {
-    color: colors.textMuted,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  productBottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
+    alignItems:    'baseline',
+    gap:           2,
+    marginTop:     4,
   },
   productPrice: {
-    fontSize: 18,
+    color:      colors.farmerColor,
+    fontSize:   18,
     fontWeight: '900',
-    color: colors.primary,
   },
   productUnit: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textLight,
+    color:      colors.textMuted,
+    fontSize:   10,
+    fontWeight: '500',
   },
-  productStock: {
-    fontSize: 10,
-    color: colors.textLight,
-    marginTop: 3,
+  stockText: {
+    color:    colors.success,
+    fontSize: 9,
     fontWeight: '600',
   },
-  // 🆕 Two action buttons
-  productBtns: {
+  stockLow: { color: colors.warning },
+  ratingRow: {
     flexDirection: 'row',
-    gap: 6,
-    alignItems: 'center',
+    alignItems:    'center',
+    gap:           3,
+    marginTop:     2,
   },
-  cartAddBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: colors.primaryPale,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.borderGold,
+  ratingStar:   { fontSize: 10 },
+  ratingText: {
+    color:      colors.primary,
+    fontSize:   10,
+    fontWeight: '800',
   },
-  cartAddBtnText: { fontSize: 18 },
-  orderBtn: {
+  ratingCount: {
+    color:    colors.textMuted,
+    fontSize: 9,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap:           6,
+    marginTop:     8,
+  },
+  addBtn: {
+    flex:            1,
     backgroundColor: colors.farmerColor,
-    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: borderRadius.large,
+    borderRadius:    borderRadius.large,
+    alignItems:      'center',
     ...shadow,
   },
-  btnDisabled: {
+  addBtnDisabled: {
     backgroundColor: colors.border,
-    opacity: 0.6,
+    opacity:         0.6,
   },
-  orderBtnText: {
-    color: colors.textWhite,
+  addBtnText: {
+    color:      colors.textWhite,
     fontWeight: '900',
-    fontSize: 11,
+    fontSize:   11,
+  },
+  removeBtn: {
+    backgroundColor: colors.dangerPale,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius:    borderRadius.large,
+    alignItems:      'center',
+    borderWidth:     1,
+    borderColor:     colors.danger + '30',
+  },
+  removeBtnText: { fontSize: 14 },
+  addMoreBtn: {
+    flex:            1,
+    backgroundColor: colors.farmerColor,
+    paddingVertical: 10,
+    borderRadius:    borderRadius.large,
+    alignItems:      'center',
+  },
+  addMoreBtnText: {
+    color:      colors.textWhite,
+    fontWeight: '900',
+    fontSize:   11,
   },
 
-  // ── EMPTY ───────────────────────────────
+  // ── EMPTY ───────────────────────────────────
   emptyWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 80,
+    alignItems:      'center',
+    paddingVertical: 60,
     paddingHorizontal: 40,
+    gap:             10,
   },
-  emptyIcon: { fontSize: 64, marginBottom: 20 },
+  emptyIcon: { fontSize: 60 },
   emptyTitle: {
-    fontSize: 22,
+    fontSize:   20,
     fontWeight: '900',
-    color: colors.textDark,
-    marginBottom: 10,
+    color:      colors.textDark,
   },
   emptySub: {
-    fontSize: 13,
-    color: colors.textLight,
+    fontSize:  13,
+    color:     colors.textLight,
     textAlign: 'center',
     lineHeight: 20,
-    marginBottom: 20,
   },
-  clearSearchBtn: {
-    backgroundColor: colors.primary,
+  clearBtn: {
+    backgroundColor: colors.primaryPale,
     paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: borderRadius.large,
-    ...shadowGold,
+    borderRadius:    borderRadius.large,
+    borderWidth:     1,
+    borderColor:     colors.borderGold,
+    marginTop:       8,
   },
-  clearSearchBtnText: {
-    color: colors.textWhite,
+  clearBtnText: {
+    color:      colors.primary,
     fontWeight: '800',
-    fontSize: 12,
+    fontSize:   13,
   },
 
-  // 🆕 FLOATING CART BUTTON ────────────────
-  floatingCart: {
+  // ── FLOATING CART ───────────────────────────
+  floatingCartWrap: {
     position: 'absolute',
-    bottom: 16,
-    left: 20,
-    right: 20,
-    backgroundColor: colors.primary,
-    borderRadius: borderRadius.xlarge,
-    padding: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    bottom:   20,
+    left:     16,
+    right:    16,
+  },
+  floatingCart: {
+    backgroundColor: colors.dark,
+    borderRadius:    borderRadius.xxlarge,
+    padding:         16,
+    flexDirection:   'row',
+    justifyContent:  'space-between',
+    alignItems:      'center',
+    borderWidth:     1,
+    borderColor:     colors.borderGold,
     ...shadowGold,
   },
   floatingCartLeft: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    alignItems:    'center',
+    gap:           12,
   },
   floatingCartBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.textWhite,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: colors.primary,
+    width:           34,
+    height:          34,
+    borderRadius:    12,
+    alignItems:      'center',
+    justifyContent:  'center',
+    ...shadowGold,
   },
   floatingCartBadgeText: {
-    color: colors.primary,
+    color:      colors.textWhite,
     fontWeight: '900',
-    fontSize: 13,
+    fontSize:   15,
   },
-  floatingCartText: {
-    color: colors.textWhite,
+  floatingCartLabel: {
+    color:      colors.textWhite,
     fontWeight: '800',
-    fontSize: 14,
+    fontSize:   15,
+  },
+  floatingCartSub: {
+    color:    'rgba(255,255,255,0.5)',
+    fontSize: 10,
+  },
+  floatingCartRight: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           8,
   },
   floatingCartTotal: {
-    color: colors.textWhite,
+    color:      colors.primary,
     fontWeight: '900',
-    fontSize: 16,
+    fontSize:   18,
   },
-
-  // ── MODAL ───────────────────────────────
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: colors.overlay,
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    padding: 24,
-    paddingBottom: 40,
-    borderTopWidth: 1,
-    borderColor: colors.borderGold,
-  },
-  modalHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  modalTitleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 22,
+  floatingCartArrow: {
+    color:      colors.primary,
+    fontSize:   18,
     fontWeight: '900',
-    color: colors.textDark,
-  },
-  modalCloseBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.inputBackground,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  modalCloseBtnText: {
-    color: colors.textMedium,
-    fontWeight: '700',
-    fontSize: 14,
-  },
-
-  // ── MODAL PRODUCT ───────────────────────
-  modalProductCard: {
-    backgroundColor: colors.inputBackground,
-    borderRadius: borderRadius.xlarge,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: colors.borderGold,
-  },
-  modalProductImage: {
-    width: 70,
-    height: 70,
-    borderRadius: 16,
-  },
-  modalProductEmoji: {
-    width: 70,
-    height: 70,
-    borderRadius: 20,
-    backgroundColor: colors.farmerBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalProductInfo: { flex: 1 },
-  modalProductName: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: colors.textDark,
-    marginBottom: 4,
-  },
-  modalProductPrice: {
-    fontSize: 14,
-    color: colors.primary,
-    fontWeight: '800',
-    marginBottom: 3,
-  },
-  modalProductStock: {
-    fontSize: 11,
-    color: colors.textLight,
-    fontWeight: '600',
-  },
-
-  // 🆕 Add to Cart Button in modal
-  addToCartBtn: {
-    backgroundColor: colors.primaryPale,
-    borderRadius: borderRadius.large,
-    padding: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.borderGold,
-    marginBottom: 12,
-  },
-  addToCartBtnText: {
-    color: colors.primary,
-    fontWeight: '900',
-    fontSize: 13,
-    letterSpacing: 0.5,
-  },
-
-  // 🆕 Or Divider
-  orDivider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 16,
-  },
-  orLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  orText: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-
-  // ── QUANTITY ────────────────────────────
-  modalLabel: {
-    color: colors.primaryDark,
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 2,
-    marginBottom: 12,
-  },
-  qtyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 24,
-  },
-  qtyBtn: {
-    width: 50,
-    height: 50,
-    borderRadius: 16,
-    backgroundColor: colors.inputBackground,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  qtyBtnPlus: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  qtyBtnText: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: colors.textDark,
-    lineHeight: 28,
-  },
-  qtyInput: {
-    flex: 1,
-    height: 50,
-    backgroundColor: colors.dark,
-    borderRadius: 16,
-    fontSize: 22,
-    fontWeight: '900',
-    color: colors.primaryLight,
-    borderWidth: 1,
-    borderColor: colors.borderGold,
-  },
-
-  // ── MODAL TOTAL ─────────────────────────
-  modalTotalCard: {
-    backgroundColor: colors.dark,
-    borderRadius: borderRadius.xlarge,
-    padding: 18,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: colors.borderGold,
-    ...shadowDark,
-  },
-  modalTotalLabel: {
-    color: colors.textLight,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 2,
-  },
-  modalTotalValue: {
-    color: colors.primaryLight,
-    fontSize: 28,
-    fontWeight: '900',
-  },
-
-  // ── MODAL BUTTONS ───────────────────────
-  modalBtns: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  cancelBtn: {
-    flex: 1,
-    padding: 16,
-    borderRadius: borderRadius.large,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    backgroundColor: colors.inputBackground,
-  },
-  cancelBtnText: {
-    color: colors.textMedium,
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  confirmBtn: {
-    flex: 2,
-    padding: 16,
-    borderRadius: borderRadius.large,
-    backgroundColor: colors.farmerColor,
-    alignItems: 'center',
-    ...shadowStrong,
-  },
-  confirmBtnText: {
-    color: colors.textWhite,
-    fontWeight: '900',
-    fontSize: 13,
-    letterSpacing: 0.5,
-  },
-
-  // 🆕 CART MODAL ITEMS ────────────────────
-  cartItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: 10,
-  },
-  cartItemEmoji: { fontSize: 24 },
-  cartItemInfo: { flex: 1 },
-  cartItemName: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.textDark,
-  },
-  cartItemPrice: {
-    fontSize: 11,
-    color: colors.textLight,
-    marginTop: 2,
-  },
-  cartItemTotal: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: colors.primary,
-  },
-  cartItemRemove: {
-    color: colors.danger,
-    fontSize: 14,
-    fontWeight: '900',
-    paddingHorizontal: 4,
-  },
-
-  // 🆕 ADDRESS INPUT ───────────────────────
-  addressInput: {
-    backgroundColor: colors.inputBackground,
-    borderRadius: borderRadius.large,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  addressTextInput: {
-    flex: 1,
-    fontSize: 13,
-    color: colors.textDark,
-    minHeight: 44,
-    lineHeight: 20,
   },
 });

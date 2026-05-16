@@ -1,7 +1,15 @@
 // ============================================
-// ZAVARA REVIEW SCREEN - COMPLETE FIXED v2.1
+// ZAVARA REVIEWSCREEN.JS - v3.0
+// Compare to: Grab's review flow, Airbnb reviews
+// Big improvements: better animations, no Alert,
+// animated success, better tag UX
 // ============================================
-import { useState, useRef, useEffect } from 'react';
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+} from 'react';
 import {
   View,
   Text,
@@ -12,8 +20,8 @@ import {
   ScrollView,
   StatusBar,
   Animated,
-  Image,
-  Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import axios from 'axios';
 import {
@@ -24,155 +32,401 @@ import {
   borderRadius,
 } from '../theme';
 import { showToast } from './ToastManager';
-import { API_URL } from '../config'; // 🔧 FIX
+import { API_URL }   from '../config';
 
+// ============================================
+// CONSTANTS
+// ============================================
+const RATING_DATA = [
+  { label: 'Poor',      emoji: '😞', color: colors.danger       },
+  { label: 'Fair',      emoji: '😐', color: colors.warning      },
+  { label: 'Good',      emoji: '🙂', color: colors.primary      },
+  { label: 'Great',     emoji: '😊', color: colors.farmerColor  },
+  { label: 'Excellent', emoji: '🤩', color: colors.success      },
+];
+
+const FOOD_TAGS = [
+  '😋 Delicious',
+  '🚀 Fast Delivery',
+  '📦 Good Packaging',
+  '💰 Worth the Price',
+  '🌶️ Authentic Taste',
+  '🥗 Fresh Ingredients',
+  '🤝 Great Service',
+  '🌟 Will Order Again',
+];
+
+const MARKET_TAGS = [
+  '🌾 Very Fresh',
+  '💰 Good Value',
+  '📦 Well Packed',
+  '🚀 Fast Delivery',
+  '😊 Friendly Seller',
+  '🥗 Great Quality',
+  '🤝 Trustworthy',
+  '🌟 Will Buy Again',
+];
+
+// ============================================
+// STAR COMPONENT - own component for clean code
+// ============================================
+function StarRating({ rating, onRate }) {
+  const anims = useRef(
+    [0, 1, 2, 3, 4].map(() => new Animated.Value(1))
+  ).current;
+
+  const handlePress = useCallback((star) => {
+    onRate(star);
+    // Cascade animation like Grab reviews
+    for (let i = 0; i < star; i++) {
+      setTimeout(() => {
+        Animated.sequence([
+          Animated.spring(anims[i], {
+            toValue: 1.5,
+            friction: 3,
+            tension: 100,
+            useNativeDriver: true,
+          }),
+          Animated.spring(anims[i], {
+            toValue: 1,
+            friction: 4,
+            tension: 60,
+            useNativeDriver: true,
+          }),
+        ]).start();
+      }, i * 50);
+    }
+    // Also shrink stars above selection
+    for (let i = star; i < 5; i++) {
+      setTimeout(() => {
+        Animated.spring(anims[i], {
+          toValue: 1,
+          friction: 6,
+          useNativeDriver: true,
+        }).start();
+      }, i * 30);
+    }
+  }, [anims, onRate]);
+
+  const ratingInfo = rating > 0
+    ? RATING_DATA[rating - 1]
+    : null;
+
+  return (
+    <View style={starStyles.wrap}>
+      {/* Stars row */}
+      <View style={starStyles.row}>
+        {[1, 2, 3, 4, 5].map((star) => (
+          <TouchableOpacity
+            key={star}
+            onPress={() => handlePress(star)}
+            style={starStyles.btn}
+            hitSlop={{ top: 8, bottom: 8,
+              left: 4, right: 4 }}
+            activeOpacity={0.8}>
+            <Animated.Text style={[
+              starStyles.star,
+              { transform: [{ scale: anims[star - 1] }] },
+            ]}>
+              {star <= rating ? '⭐' : '☆'}
+            </Animated.Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Rating label */}
+      <Animated.View style={[starStyles.labelWrap, {
+        backgroundColor: ratingInfo
+          ? ratingInfo.color + '15'
+          : colors.inputBackground,
+        borderColor: ratingInfo
+          ? ratingInfo.color + '40'
+          : colors.border,
+      }]}>
+        <Text style={starStyles.labelEmoji}>
+          {ratingInfo?.emoji || '✨'}
+        </Text>
+        <Text style={[starStyles.labelText, {
+          color: ratingInfo?.color || colors.textMuted,
+        }]}>
+          {ratingInfo
+            ? `${ratingInfo.label}!`
+            : 'Tap a star to rate'}
+        </Text>
+      </Animated.View>
+    </View>
+  );
+}
+
+const starStyles = StyleSheet.create({
+  wrap: { alignItems: 'center', gap: 16 },
+  row: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  btn: { padding: 4 },
+  star: {
+    fontSize: 40,
+    color: colors.border,
+  },
+  labelWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: borderRadius.round,
+    borderWidth: 1.5,
+  },
+  labelEmoji: { fontSize: 20 },
+  labelText: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
+});
+
+// ============================================
+// SUCCESS SCREEN - separate component
+// ============================================
+function SuccessScreen({ rating, onDone }) {
+  const scaleAnim   = useRef(new Animated.Value(0)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
+  const starsAnim   = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          friction: 6,
+          tension: 50,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.spring(starsAnim, {
+        toValue: 1,
+        friction: 5,
+        tension: 40,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  const ratingInfo = RATING_DATA[rating - 1];
+
+  return (
+    <View style={successStyles.wrap}>
+      <Animated.View style={[successStyles.circle, {
+        opacity: opacityAnim,
+        transform: [{ scale: scaleAnim }],
+        backgroundColor: ratingInfo?.color + '18' ||
+          colors.primaryPale,
+        borderColor: ratingInfo?.color + '40' ||
+          colors.borderGold,
+      }]}>
+        <Text style={successStyles.emoji}>
+          {ratingInfo?.emoji || '⭐'}
+        </Text>
+      </Animated.View>
+
+      <Animated.View style={{
+        opacity: opacityAnim,
+        transform: [{ scale: starsAnim }],
+        alignItems: 'center',
+      }}>
+        <Text style={successStyles.title}>
+          Review Submitted!
+        </Text>
+        <Text style={successStyles.sub}>
+          Thank you! Your feedback{'\n'}
+          helps the community 🌴
+        </Text>
+
+        <View style={[successStyles.ratingBadge, {
+          backgroundColor: ratingInfo?.color + '15',
+          borderColor:     ratingInfo?.color + '40',
+        }]}>
+          <Text style={successStyles.ratingStars}>
+            {'⭐'.repeat(rating)}
+          </Text>
+          <Text style={[successStyles.ratingLabel, {
+            color: ratingInfo?.color || colors.primary,
+          }]}>
+            {ratingInfo?.label}!
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={[successStyles.doneBtn, {
+            backgroundColor: ratingInfo?.color ||
+              colors.primary,
+          }]}
+          onPress={onDone}
+          activeOpacity={0.85}>
+          <Text style={successStyles.doneBtnText}>
+            Done ✓
+          </Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
+  );
+}
+
+const successStyles = StyleSheet.create({
+  wrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+    gap: 20,
+  },
+  circle: {
+    width: 120, height: 120,
+    borderRadius: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    ...shadowGold,
+  },
+  emoji:  { fontSize: 58 },
+  title: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: colors.textDark,
+    textAlign: 'center',
+  },
+  sub: {
+    fontSize: 14,
+    color: colors.textLight,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  ratingBadge: {
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: borderRadius.xlarge,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    gap: 6,
+  },
+  ratingStars: { fontSize: 24 },
+  ratingLabel: {
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  doneBtn: {
+    paddingHorizontal: 40,
+    paddingVertical: 15,
+    borderRadius: borderRadius.large,
+    marginTop: 8,
+    ...shadowGold,
+  },
+  doneBtnText: {
+    color: colors.textWhite,
+    fontWeight: '900',
+    fontSize: 16,
+    letterSpacing: 0.5,
+  },
+});
+
+// ============================================
+// MAIN REVIEW SCREEN
+// ============================================
 export default function ReviewScreen({
   userId,
-  restaurantId,   // optional - for food orders
-  productId,      // 🆕 optional - for market orders
+  restaurantId,
+  productId,
   orderId,
   restaurantName,
-  productName,    // 🆕 for market orders
-  orderType = 'food', // 🆕 'food' | 'market'
+  productName,
+  orderType = 'food',
   onBack,
   onSuccess,
 }) {
   const [rating, setRating]         = useState(0);
   const [comment, setComment]       = useState('');
+  const [selectedTags, setSelectedTags] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted]   = useState(false);
 
-  // 🆕 Star animation
-  const starAnims = useRef(
-    [1, 2, 3, 4, 5].map(() => new Animated.Value(1))
-  ).current;
+  const tags = orderType === 'market'
+    ? MARKET_TAGS : FOOD_TAGS;
 
-  // ── ANIMATE STAR ON TAP ─────────────────────
-  const animateStar = (starIndex) => {
-    const anim = starAnims[starIndex];
-    Animated.sequence([
-      Animated.spring(anim, {
-        toValue: 1.4,
-        friction: 3,
-        useNativeDriver: true,
-      }),
-      Animated.spring(anim, {
-        toValue: 1,
-        friction: 4,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
+  // ── TOGGLE TAG ───────────────────────────────
+  const toggleTag = useCallback((tag) => {
+    setSelectedTags(prev =>
+      prev.includes(tag)
+        ? prev.filter(t => t !== tag)
+        : [...prev, tag]
+    );
+  }, []);
 
-  const handleStarPress = (star) => {
-    setRating(star);
-    // Animate all stars up to selected
-    for (let i = 0; i < star; i++) {
-      setTimeout(() => animateStar(i), i * 60);
+  // ── BUILD COMMENT FROM TAGS + TEXT ───────────
+  const buildFinalComment = useCallback(() => {
+    const tagStr = selectedTags.join(' · ');
+    if (tagStr && comment.trim()) {
+      return `${tagStr}\n${comment.trim()}`;
     }
-  };
+    return tagStr || comment.trim();
+  }, [selectedTags, comment]);
 
-  // ── SUBMIT REVIEW ───────────────────────────
-  const handleSubmit = async () => {
+  // ── SUBMIT ───────────────────────────────────
+  const handleSubmit = useCallback(async () => {
     if (rating === 0) {
       showToast('warning', 'Select Rating',
-        'Please select a star rating!');
-      return;
-    }
-    if (comment.length > 0 && comment.length < 5) {
-      showToast('warning', 'Review Too Short',
-        'Please write at least 5 characters');
+        'Please tap a star to rate!');
       return;
     }
 
     setSubmitting(true);
     try {
-      // 🔧 FIX: Build params properly
-      const params = {
-        user_id: userId,
-        rating: rating,
+      const params = new URLSearchParams({
+        user_id:  userId,
+        rating:   rating,
         order_id: orderId,
-      };
+      });
 
-      if (comment.trim()) {
-        params.comment = comment.trim();
+      const finalComment = buildFinalComment();
+      if (finalComment) {
+        params.append('comment', finalComment);
       }
 
-      // 🔧 FIX: Add correct ID based on order type
       if (orderType === 'food' && restaurantId) {
-        params.restaurant_id = restaurantId;
+        params.append('restaurant_id', restaurantId);
       } else if (orderType === 'market' && productId) {
-        params.product_id = productId;
+        params.append('product_id', productId);
       }
-
-      // Build query string
-      const queryString = new URLSearchParams(
-        params
-      ).toString();
 
       await axios.post(
-        `${API_URL}/reviews?${queryString}`
+        `${API_URL}/reviews?${params.toString()}`
       );
 
       setSubmitted(true);
       showToast('success', 'Review Submitted! ⭐',
         'Thank you for your feedback!');
 
-      setTimeout(() => {
-        if (onSuccess) onSuccess();
-        onBack?.();
-      }, 1500);
-
     } catch (error) {
       const status = error.response?.status;
       if (status === 400) {
-        showToast('warning', 'Already Reviewed!',
+        showToast('warning', 'Already Reviewed! ⚠️',
           'You already reviewed this order.');
-        // Still go back since they already reviewed
         setTimeout(() => onBack?.(), 1500);
       } else {
         showToast('error', 'Error',
-          'Could not submit review. Try again.');
+          'Could not submit. Try again.');
       }
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
-  };
+  }, [rating, userId, orderId, orderType,
+    restaurantId, productId, buildFinalComment, onBack]);
 
-  // ── RATING LABEL ────────────────────────────
-  const getRatingLabel = () => {
-    const labels = {
-      1: '😞 Poor',
-      2: '😐 Fair',
-      3: '🙂 Good',
-      4: '😊 Great',
-      5: '🤩 Excellent!',
-    };
-    return labels[rating] || 'Tap to rate';
-  };
-
-  // ── QUICK TAGS (context-aware) ───────────────
-  const getQuickTags = () => {
-    if (orderType === 'market') {
-      return [
-        '🌾 Very Fresh',
-        '💰 Good Value',
-        '📦 Well Packed',
-        '🚀 Fast',
-        '😊 Friendly Seller',
-        '🥗 Great Quality',
-      ];
-    }
-    return [
-      '😋 Delicious',
-      '🚀 Fast Delivery',
-      '📦 Good Packaging',
-      '💰 Worth it',
-      '🌶️ Authentic',
-      '🥗 Fresh',
-    ];
-  };
-
-  // ── SUCCESS STATE ───────────────────────────
+  // ── SUCCESS STATE ────────────────────────────
   if (submitted) {
     return (
       <View style={styles.container}>
@@ -180,55 +434,54 @@ export default function ReviewScreen({
           backgroundColor={colors.headerBg}
           barStyle="dark-content"
         />
-        <View style={styles.successWrap}>
-          <View style={styles.successCircle}>
-            <Text style={styles.successEmoji}>⭐</Text>
-          </View>
-          <Text style={styles.successTitle}>
-            Review Submitted!
-          </Text>
-          <Text style={styles.successSub}>
-            Thank you for your feedback!{'\n'}
-            It helps the community.
-          </Text>
-          <View style={styles.ratingDisplay}>
-            <Text style={styles.ratingDisplayStars}>
-              {'⭐'.repeat(rating)}
-            </Text>
-            <Text style={styles.ratingDisplayLabel}>
-              {getRatingLabel()}
-            </Text>
-          </View>
-        </View>
+        <SuccessScreen
+          rating={rating}
+          onDone={() => {
+            onSuccess?.();
+            onBack?.();
+          }}
+        />
       </View>
     );
   }
 
+  // ── MAIN RENDER ──────────────────────────────
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <StatusBar
         backgroundColor={colors.headerBg}
         barStyle="dark-content"
       />
 
-      {/* HEADER */}
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
-          style={styles.headerBackBtn}
-          onPress={onBack}>
-          <Text style={styles.headerBackText}>←</Text>
+          style={styles.backBtn}
+          onPress={onBack}
+          activeOpacity={0.8}>
+          <Text style={styles.backBtnText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>
           Rate & Review
         </Text>
-        <View style={{ width: 38 }} />
+        {/* Skip button in header - like Grab */}
+        <TouchableOpacity
+          style={styles.skipHeaderBtn}
+          onPress={onBack}>
+          <Text style={styles.skipHeaderText}>
+            Skip
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView
         contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled">
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}>
 
-        {/* SUBJECT CARD */}
+        {/* Subject card */}
         <View style={styles.subjectCard}>
           <Text style={styles.subjectEmoji}>
             {orderType === 'market' ? '🌾' : '🍴'}
@@ -244,141 +497,93 @@ export default function ReviewScreen({
             </Text>
             {orderId && (
               <Text style={styles.subjectOrder}>
-                Order #{String(orderId).padStart(4, '0')}
+                Order #
+                {String(orderId).padStart(4, '0')}
               </Text>
             )}
           </View>
-          <View style={[styles.orderTypeBadge, {
+          <View style={[styles.typeBadge, {
             backgroundColor: orderType === 'market'
               ? colors.farmerBg : colors.cuisineBg,
           }]}>
-            <Text style={[styles.orderTypeBadgeText, {
+            <Text style={[styles.typeBadgeText, {
               color: orderType === 'market'
                 ? colors.farmerColor
                 : colors.cuisineColor,
             }]}>
               {orderType === 'market'
-                ? 'Market' : 'Food'}
+                ? '🌾 Market' : '🍴 Food'}
             </Text>
           </View>
         </View>
 
-        {/* STAR RATING */}
+        {/* Star rating */}
         <View style={styles.ratingCard}>
           <Text style={styles.ratingCardTitle}>
             How was your experience?
           </Text>
-
-          {/* STARS */}
-          <View style={styles.starRow}>
-            {[1, 2, 3, 4, 5].map((star) => (
-              <TouchableOpacity
-                key={star}
-                onPress={() => handleStarPress(star)}
-                style={styles.starBtn}
-                hitSlop={{
-                  top: 8, bottom: 8,
-                  left: 4, right: 4,
-                }}>
-                <Animated.Text style={[
-                  styles.starIcon,
-                  star <= rating && styles.starActive,
-                  {
-                    transform: [{
-                      scale: starAnims[star - 1],
-                    }],
-                  },
-                ]}>
-                  {star <= rating ? '⭐' : '☆'}
-                </Animated.Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* RATING LABEL */}
-          <View style={[styles.ratingLabelWrap, {
-            backgroundColor: rating > 0
-              ? colors.primaryPale
-              : colors.inputBackground,
-            borderColor: rating > 0
-              ? colors.borderGold
-              : colors.border,
-          }]}>
-            <Text style={[styles.ratingLabel, {
-              color: rating > 0
-                ? colors.primary
-                : colors.textMuted,
-            }]}>
-              {getRatingLabel()}
-            </Text>
-          </View>
+          <StarRating
+            rating={rating}
+            onRate={setRating}
+          />
         </View>
 
-        {/* QUICK TAGS */}
+        {/* Quick tags */}
         <Text style={styles.sectionLabel}>
-          QUICK TAGS
+          QUICK FEEDBACK
         </Text>
-        <View style={styles.tagsRow}>
-          {getQuickTags().map((tag) => (
-            <TouchableOpacity
-              key={tag}
-              style={[
-                styles.tag,
-                comment.includes(tag) && styles.tagActive,
-              ]}
-              onPress={() => {
-                if (comment.includes(tag)) {
-                  setComment(
-                    comment.replace(tag, '').trim()
-                  );
-                } else {
-                  setComment(
-                    comment
-                      ? `${comment} ${tag}`
-                      : tag
-                  );
-                }
-              }}>
-              <Text style={[
-                styles.tagText,
-                comment.includes(tag) &&
-                styles.tagTextActive,
-              ]}>
-                {tag}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        <View style={styles.tagsGrid}>
+          {tags.map((tag) => {
+            const isSelected = selectedTags.includes(tag);
+            return (
+              <TouchableOpacity
+                key={tag}
+                style={[styles.tag,
+                  isSelected && styles.tagSelected]}
+                onPress={() => toggleTag(tag)}
+                activeOpacity={0.8}>
+                <Text style={[styles.tagText,
+                  isSelected && styles.tagTextSelected]}>
+                  {tag}
+                </Text>
+                {isSelected && (
+                  <Text style={styles.tagCheck}>✓</Text>
+                )}
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
-        {/* COMMENT INPUT */}
+        {/* Comment input */}
         <Text style={styles.sectionLabel}>
-          YOUR REVIEW
+          YOUR REVIEW (OPTIONAL)
         </Text>
         <View style={styles.commentCard}>
           <TextInput
             style={styles.commentInput}
-            placeholder="Share your experience with others..."
+            placeholder="Share more about your experience..."
             placeholderTextColor={colors.textMuted}
             value={comment}
             onChangeText={setComment}
             multiline
             numberOfLines={4}
             maxLength={500}
+            textAlignVertical="top"
           />
           <Text style={styles.charCount}>
             {comment.length}/500
           </Text>
         </View>
 
-        {/* SUBMIT BUTTON */}
+        {/* Submit */}
         {submitting ? (
-          <View style={styles.submittingWrap}>
+          <View style={styles.loadingWrap}>
             <ActivityIndicator
               size="large"
               color={colors.primary}
             />
-            <Text style={styles.submittingText}>
-              Submitting review...
+            <Text style={styles.loadingText}>
+              Submitting...
             </Text>
           </View>
         ) : (
@@ -388,36 +593,17 @@ export default function ReviewScreen({
               rating === 0 && styles.submitBtnDisabled,
             ]}
             onPress={handleSubmit}
-            disabled={rating === 0}>
+            disabled={rating === 0}
+            activeOpacity={0.85}>
             <Text style={styles.submitBtnText}>
               ⭐ SUBMIT REVIEW
             </Text>
           </TouchableOpacity>
         )}
 
-        {/* SKIP */}
-        <TouchableOpacity
-          style={styles.skipBtn}
-          onPress={() => {
-            Alert.alert(
-              'Skip Review',
-              'Are you sure? Your feedback helps others!',
-              [
-                { text: 'Write Review', style: 'cancel' },
-                {
-                  text: 'Skip',
-                  onPress: () => onBack?.(),
-                },
-              ]
-            );
-          }}>
-          <Text style={styles.skipBtnText}>
-            Skip for now
-          </Text>
-        </TouchableOpacity>
-
+        <View style={{ height: 20 }} />
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -425,13 +611,10 @@ export default function ReviewScreen({
 // STYLES
 // ============================================
 const styles = StyleSheet.create({
-
   container: {
     flex: 1,
     backgroundColor: colors.background,
   },
-
-  // ── HEADER ──────────────────────────────────
   header: {
     backgroundColor: colors.headerBg,
     paddingTop: 52,
@@ -444,9 +627,8 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.headerBorder,
     ...shadow,
   },
-  headerBackBtn: {
-    width: 38,
-    height: 38,
+  backBtn: {
+    width: 38, height: 38,
     borderRadius: 12,
     backgroundColor: colors.inputBackground,
     alignItems: 'center',
@@ -454,7 +636,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  headerBackText: {
+  backBtnText: {
     color: colors.primary,
     fontSize: 18,
     fontWeight: '700',
@@ -464,14 +646,20 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '900',
   },
-
-  // ── CONTENT ─────────────────────────────────
+  // Skip in header (like Grab) - no Alert blocking!
+  skipHeaderBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  skipHeaderText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
   content: {
     padding: 20,
     paddingBottom: 50,
   },
-
-  // ── SUBJECT CARD ────────────────────────────
   subjectCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
@@ -485,7 +673,7 @@ const styles = StyleSheet.create({
     ...shadow,
   },
   subjectEmoji: { fontSize: 36 },
-  subjectInfo: { flex: 1 },
+  subjectInfo:  { flex: 1 },
   subjectLabel: {
     color: colors.textMuted,
     fontSize: 9,
@@ -504,95 +692,75 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
-  orderTypeBadge: {
+  typeBadge: {
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: borderRadius.round,
   },
-  orderTypeBadgeText: {
+  typeBadgeText: {
     fontSize: 10,
     fontWeight: '800',
   },
-
-  // ── RATING CARD ─────────────────────────────
   ratingCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
     padding: 24,
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 24,
     borderWidth: 1,
     borderColor: colors.borderGold,
+    gap: 16,
     ...shadowMd,
   },
   ratingCardTitle: {
     color: colors.textDark,
     fontSize: 16,
     fontWeight: '800',
-    marginBottom: 20,
     textAlign: 'center',
   },
-  starRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 16,
-  },
-  starBtn: { padding: 4 },
-  starIcon: {
-    fontSize: 38,
-    color: colors.border,
-  },
-  starActive: { color: colors.primary },
-  ratingLabelWrap: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: borderRadius.round,
-    borderWidth: 1,
-  },
-  ratingLabel: {
-    fontSize: 14,
-    fontWeight: '800',
-  },
-
-  // ── SECTION LABEL ───────────────────────────
   sectionLabel: {
-    color: colors.textLight,
+    color: colors.textMuted,
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 2,
     marginBottom: 12,
   },
-
-  // ── TAGS ────────────────────────────────────
-  tagsRow: {
+  tagsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 20,
+    marginBottom: 24,
   },
   tag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     backgroundColor: colors.cardBackground,
     paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingVertical: 10,
     borderRadius: borderRadius.round,
     borderWidth: 1,
     borderColor: colors.border,
+    ...shadow,
   },
-  tagActive: {
+  tagSelected: {
     backgroundColor: colors.primaryPale,
-    borderColor: colors.primary,
+    borderColor:     colors.primary,
   },
   tagText: {
     color: colors.textMedium,
     fontSize: 12,
     fontWeight: '600',
   },
-  tagTextActive: {
-    color: colors.primary,
+  tagTextSelected: {
+    color:      colors.primary,
     fontWeight: '800',
   },
-
-  // ── COMMENT ─────────────────────────────────
+  tagCheck: {
+    color:      colors.primary,
+    fontSize:   11,
+    fontWeight: '900',
+  },
   commentCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
@@ -603,94 +771,39 @@ const styles = StyleSheet.create({
     ...shadow,
   },
   commentInput: {
-    fontSize: 14,
-    color: colors.textDark,
+    fontSize:   14,
+    color:      colors.textDark,
     lineHeight: 22,
-    minHeight: 100,
-    textAlignVertical: 'top',
+    minHeight:  100,
   },
   charCount: {
-    color: colors.textMuted,
-    fontSize: 11,
-    textAlign: 'right',
-    marginTop: 8,
+    color:      colors.textMuted,
+    fontSize:   11,
+    textAlign:  'right',
+    marginTop:  8,
   },
-
-  // ── SUBMIT ──────────────────────────────────
-  submittingWrap: {
+  loadingWrap: {
     alignItems: 'center',
     paddingVertical: 20,
     gap: 12,
   },
-  submittingText: {
-    color: colors.textLight,
-    fontSize: 13,
+  loadingText: {
+    color:      colors.textLight,
+    fontSize:   13,
     fontWeight: '600',
   },
   submitBtn: {
     backgroundColor: colors.primary,
-    padding: 17,
-    borderRadius: borderRadius.large,
-    alignItems: 'center',
-    marginBottom: 14,
+    padding:         17,
+    borderRadius:    borderRadius.large,
+    alignItems:      'center',
     ...shadowGold,
   },
-  submitBtnDisabled: { opacity: 0.5 },
+  submitBtnDisabled: { opacity: 0.45 },
   submitBtnText: {
-    color: colors.textWhite,
-    fontWeight: '900',
-    fontSize: 14,
+    color:         colors.textWhite,
+    fontWeight:    '900',
+    fontSize:      14,
     letterSpacing: 1,
-  },
-  skipBtn: {
-    alignItems: 'center',
-    padding: 12,
-  },
-  skipBtnText: {
-    color: colors.textMuted,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  // ── SUCCESS STATE ───────────────────────────
-  successWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 40,
-    gap: 16,
-  },
-  successCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: colors.primaryPale,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: colors.borderGold,
-    ...shadowGold,
-  },
-  successEmoji: { fontSize: 55 },
-  successTitle: {
-    fontSize: 26,
-    fontWeight: '900',
-    color: colors.textDark,
-  },
-  successSub: {
-    fontSize: 14,
-    color: colors.textLight,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  ratingDisplay: {
-    alignItems: 'center',
-    gap: 8,
-  },
-  ratingDisplayStars: { fontSize: 28 },
-  ratingDisplayLabel: {
-    color: colors.primary,
-    fontSize: 16,
-    fontWeight: '800',
   },
 });

@@ -1,131 +1,167 @@
 // ============================================
-// ZAVARA IMAGE PICKER HELPER - FIXED v2.1
+// ZAVARA IMAGEPICKERHELPER.JS - v3.0
+// Compare to: Shopee's image upload
+// Improvements: compression, progress, deduplication
 // ============================================
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import axios from 'axios';
 import { Alert, Platform } from 'react-native';
-import { API_URL } from '../config'; // 🔧 FIX
+import { API_URL } from '../config';
 
-// 🔧 FIX: Max file sizes
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+// ============================================
+// CONSTANTS
+// ============================================
+const MAX_IMAGE_SIZE = 5  * 1024 * 1024; // 5MB
 const MAX_DOC_SIZE   = 10 * 1024 * 1024; // 10MB
+const COMPRESS_QUALITY = 0.75;            // 75% quality
+const MAX_DIMENSION    = 1200;            // px
+
+const MIME_MAP = {
+  jpg:  'image/jpeg',
+  jpeg: 'image/jpeg',
+  png:  'image/png',
+  webp: 'image/webp',
+  gif:  'image/gif',
+};
 
 // ============================================
 // PERMISSION HELPERS
 // ============================================
-export async function requestImagePermission() {
+async function requestPermission(type) {
   try {
-    const { status } =
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const fn = type === 'camera'
+      ? ImagePicker.requestCameraPermissionsAsync
+      : ImagePicker.requestMediaLibraryPermissionsAsync;
+
+    const { status } = await fn();
 
     if (status !== 'granted') {
       Alert.alert(
         'Permission Required',
-        'Please allow access to your photo library in Settings.',
+        type === 'camera'
+          ? 'Please allow camera access in Settings.'
+          : 'Please allow photo library access in Settings.',
         [{ text: 'OK' }]
       );
       return false;
     }
     return true;
   } catch (err) {
-    console.log('Image permission error:', err?.message);
+    console.log(`${type} permission error:`, err?.message);
     return false;
   }
 }
 
-export async function requestCameraPermission() {
-  try {
-    const { status } =
-      await ImagePicker.requestCameraPermissionsAsync();
+export const requestImagePermission  = () =>
+  requestPermission('gallery');
+export const requestCameraPermission = () =>
+  requestPermission('camera');
 
-    if (status !== 'granted') {
-      Alert.alert(
-        'Permission Required',
-        'Please allow camera access in Settings.',
-        [{ text: 'OK' }]
-      );
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.log('Camera permission error:', err?.message);
-    return false;
+// ============================================
+// IMAGE COMPRESSION
+// Shopee compresses images before upload
+// Reduces upload time + storage costs
+// ============================================
+async function compressImage(uri, quality = COMPRESS_QUALITY) {
+  try {
+    const result = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: MAX_DIMENSION } }],
+      {
+        compress: quality,
+        format: ImageManipulator.SaveFormat.JPEG,
+      }
+    );
+    return result.uri;
+  } catch {
+    // If compression fails, use original
+    return uri;
   }
+}
+
+// ============================================
+// BUILD FORM DATA - Single source of truth
+// ============================================
+function buildFormData(uri, fieldName = 'file') {
+  const formData = new FormData();
+  const ext      = uri.split('.').pop()?.toLowerCase() || 'jpg';
+  const mimeType = MIME_MAP[ext] || 'image/jpeg';
+  const cleanUri = Platform.OS === 'android'
+    ? uri
+    : uri.replace('file://', '');
+
+  formData.append(fieldName, {
+    uri:  cleanUri,
+    type: mimeType,
+    name: `upload_${Date.now()}.${ext}`,
+  });
+
+  return formData;
 }
 
 // ============================================
 // PICK FROM GALLERY
 // ============================================
-export async function pickImageFromGallery(
-  options = {}
-) {
-  const hasPermission = await requestImagePermission();
-  if (!hasPermission) return null;
+export async function pickImageFromGallery(options = {}) {
+  if (!await requestPermission('gallery')) return null;
 
   try {
-    const result =
-      await ImagePicker.launchImageLibraryAsync({
-        // 🔧 FIX: Updated for newer SDK
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: options.allowsEditing ?? true,
-        aspect: options.aspect ?? [1, 1],
-        quality: options.quality ?? 0.8,
-        allowsMultipleSelection: false,
-      });
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes:              ImagePicker.MediaTypeOptions.Images,
+      allowsEditing:           options.allowsEditing ?? true,
+      aspect:                  options.aspect ?? [1, 1],
+      quality:                 1, // Get full quality, compress ourselves
+      allowsMultipleSelection: false,
+    });
 
-    if (result.canceled || !result.assets?.length) {
-      return null;
-    }
+    if (result.canceled || !result.assets?.length) return null;
 
     const asset = result.assets[0];
 
-    // 🆕 File size check
     if (asset.fileSize && asset.fileSize > MAX_IMAGE_SIZE) {
-      Alert.alert(
-        'File Too Large',
-        'Please select an image under 5MB'
-      );
+      Alert.alert('File Too Large',
+        'Please select an image under 5MB');
       return null;
     }
 
-    return asset;
+    // Compress before returning
+    const compressedUri = await compressImage(asset.uri);
+    return { ...asset, uri: compressedUri };
+
   } catch (err) {
-    console.log('Gallery picker error:', err?.message);
+    console.log('Gallery error:', err?.message);
     Alert.alert('Error', 'Could not open photo library');
     return null;
   }
 }
 
 // ============================================
-// TAKE PHOTO WITH CAMERA
+// TAKE PHOTO
 // ============================================
 export async function takePhoto(options = {}) {
-  const hasPermission = await requestCameraPermission();
-  if (!hasPermission) return null;
+  if (!await requestPermission('camera')) return null;
 
   try {
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: options.allowsEditing ?? true,
-      aspect: options.aspect ?? [1, 1],
-      quality: options.quality ?? 0.8,
+      aspect:        options.aspect ?? [1, 1],
+      quality:       1,
     });
 
-    if (result.canceled || !result.assets?.length) {
-      return null;
-    }
+    if (result.canceled || !result.assets?.length) return null;
 
     const asset = result.assets[0];
 
-    // 🆕 File size check
     if (asset.fileSize && asset.fileSize > MAX_IMAGE_SIZE) {
-      Alert.alert(
-        'File Too Large',
-        'Please take a photo under 5MB'
-      );
+      Alert.alert('File Too Large',
+        'Please take a photo under 5MB');
       return null;
     }
 
-    return asset;
+    const compressedUri = await compressImage(asset.uri);
+    return { ...asset, uri: compressedUri };
+
   } catch (err) {
     console.log('Camera error:', err?.message);
     Alert.alert('Error', 'Could not open camera');
@@ -134,37 +170,30 @@ export async function takePhoto(options = {}) {
 }
 
 // ============================================
-// 🆕 PICK DOCUMENT (for verification)
+// PICK DOCUMENT
 // ============================================
 export async function pickDocument(options = {}) {
-  const hasPermission = await requestImagePermission();
-  if (!hasPermission) return null;
+  if (!await requestPermission('gallery')) return null;
 
   try {
-    const result =
-      await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: options.allowsEditing ?? false,
-        quality: options.quality ?? 0.9,
-        aspect: options.aspect ?? [4, 3],
-      });
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes:    ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: options.allowsEditing ?? false,
+      quality:       1,
+      aspect:        options.aspect ?? [4, 3],
+    });
 
-    if (result.canceled || !result.assets?.length) {
-      return null;
-    }
+    if (result.canceled || !result.assets?.length) return null;
 
     const asset = result.assets[0];
 
-    // 🆕 Larger size limit for documents
     if (asset.fileSize && asset.fileSize > MAX_DOC_SIZE) {
-      Alert.alert(
-        'File Too Large',
-        'Please select a document under 10MB'
-      );
+      Alert.alert('File Too Large',
+        'Please select a document under 10MB');
       return null;
     }
 
-    return asset;
+    return asset; // No compression for docs
   } catch (err) {
     console.log('Document picker error:', err?.message);
     return null;
@@ -172,248 +201,101 @@ export async function pickDocument(options = {}) {
 }
 
 // ============================================
-// HELPER: Build FormData
+// CORE UPLOAD FUNCTION
+// Single upload function - no more duplication!
+// Like Shopee's unified upload service
 // ============================================
-function buildFormData(imageAsset, fieldName = 'file') {
-  const formData = new FormData();
-
-  // 🔧 FIX: Detect actual image type from URI
-  const uri = imageAsset.uri;
-  const ext = uri.split('.').pop()?.toLowerCase() || 'jpg';
-  const mimeMap = {
-    jpg:  'image/jpeg',
-    jpeg: 'image/jpeg',
-    png:  'image/png',
-    webp: 'image/webp',
-    gif:  'image/gif',
-  };
-  const mimeType = mimeMap[ext] || imageAsset.mimeType
-    || 'image/jpeg';
-
-  formData.append(fieldName, {
-    uri: Platform.OS === 'android'
-      ? uri
-      : uri.replace('file://', ''),
-    type: mimeType,
-    name: `upload.${ext}`,
-  });
-
-  return formData;
-}
-
-// ============================================
-// UPLOAD PROFILE PHOTO
-// ============================================
-export async function uploadProfilePhoto(
-  userId,
-  imageAsset
+async function uploadImage(
+  endpoint,
+  imageAsset,
+  extraData = {},
+  onProgress = null
 ) {
-  try {
-    if (!userId || !imageAsset?.uri) {
-      return { success: false, error: 'Invalid input' };
-    }
+  if (!imageAsset?.uri) {
+    return { success: false, error: 'No image provided' };
+  }
 
-    const formData = buildFormData(imageAsset);
+  try {
+    const formData = buildFormData(imageAsset.uri);
+
+    // Append any extra fields
+    Object.entries(extraData).forEach(([key, val]) => {
+      formData.append(key, val);
+    });
 
     const response = await axios.post(
-      `${API_URL}/upload/profile/${userId}`,
+      `${API_URL}${endpoint}`,
       formData,
       {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 30000,
+        // Upload progress (like Shopee's progress bar)
+        onUploadProgress: onProgress
+          ? (progressEvent) => {
+              const percent = Math.round(
+                (progressEvent.loaded * 100) /
+                (progressEvent.total || 1)
+              );
+              onProgress(percent);
+            }
+          : undefined,
       }
     );
 
     return {
-      success: true,
-      url: response.data.image_url,
+      success:   true,
+      url:       response.data.image_url,
       public_id: response.data.public_id,
     };
   } catch (error) {
-    console.log(
-      'Profile upload error:',
-      error?.response?.status,
-      error?.message
-    );
+    console.log(`Upload error [${endpoint}]:`,
+      error?.response?.status, error?.message);
     return {
       success: false,
-      error: error?.response?.data?.detail
-        || error.message
-        || 'Upload failed',
+      error:   error?.response?.data?.detail
+               || error.message
+               || 'Upload failed',
     };
   }
 }
 
 // ============================================
-// UPLOAD PRODUCT PHOTO
+// SPECIFIC UPLOAD FUNCTIONS
+// Now just thin wrappers around uploadImage()
 // ============================================
-export async function uploadProductPhoto(
-  productId,
-  imageAsset
-) {
-  try {
-    if (!productId || !imageAsset?.uri) {
-      return { success: false, error: 'Invalid input' };
-    }
+export const uploadProfilePhoto = (userId, imageAsset, onProgress) =>
+  uploadImage(`/upload/profile/${userId}`, imageAsset, {}, onProgress);
 
-    const formData = buildFormData(imageAsset);
+export const uploadProductPhoto = (productId, imageAsset, onProgress) =>
+  uploadImage(`/upload/product/${productId}`, imageAsset, {}, onProgress);
 
-    const response = await axios.post(
-      `${API_URL}/upload/product/${productId}`,
-      formData,
-      {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 30000,
-      }
-    );
+export const uploadRestaurantPhoto = (restaurantId, imageAsset, onProgress) =>
+  uploadImage(`/upload/restaurant/${restaurantId}`, imageAsset, {}, onProgress);
 
-    return {
-      success: true,
-      url: response.data.image_url,
-      public_id: response.data.public_id,
-    };
-  } catch (error) {
-    console.log('Product upload error:', error?.message);
-    return {
-      success: false,
-      error: error?.response?.data?.detail
-        || error.message
-        || 'Upload failed',
-    };
-  }
-}
+export const uploadDocument = (userId, docType, imageAsset, onProgress) =>
+  uploadImage(
+    `/upload/document/${userId}`,
+    imageAsset,
+    { doc_type: docType },
+    onProgress
+  );
+
+export const uploadGeneralImage = (imageAsset, onProgress) =>
+  uploadImage('/upload/general', imageAsset, {}, onProgress);
 
 // ============================================
-// UPLOAD RESTAURANT PHOTO
-// ============================================
-export async function uploadRestaurantPhoto(
-  restaurantId,
-  imageAsset
-) {
-  try {
-    if (!restaurantId || !imageAsset?.uri) {
-      return { success: false, error: 'Invalid input' };
-    }
-
-    const formData = buildFormData(imageAsset);
-
-    const response = await axios.post(
-      `${API_URL}/upload/restaurant/${restaurantId}`,
-      formData,
-      {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 30000,
-      }
-    );
-
-    return {
-      success: true,
-      url: response.data.image_url,
-      public_id: response.data.public_id,
-    };
-  } catch (error) {
-    console.log('Restaurant upload error:', error?.message);
-    return {
-      success: false,
-      error: error?.response?.data?.detail
-        || error.message
-        || 'Upload failed',
-    };
-  }
-}
-
-// ============================================
-// UPLOAD DOCUMENT (for verification)
-// ============================================
-export async function uploadDocument(
-  userId,
-  docType,
-  imageAsset
-) {
-  try {
-    if (!userId || !docType || !imageAsset?.uri) {
-      return { success: false, error: 'Invalid input' };
-    }
-
-    const formData = buildFormData(imageAsset);
-    // 🔧 FIX: doc_type must be appended as form field
-    formData.append('doc_type', docType);
-
-    const response = await axios.post(
-      `${API_URL}/upload/document/${userId}`,
-      formData,
-      {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 45000, // longer timeout for docs
-      }
-    );
-
-    return {
-      success: true,
-      url: response.data.image_url,
-      public_id: response.data.public_id,
-      doc_type: docType,
-    };
-  } catch (error) {
-    console.log('Document upload error:', error?.message);
-    return {
-      success: false,
-      error: error?.response?.data?.detail
-        || error.message
-        || 'Upload failed',
-    };
-  }
-}
-
-// ============================================
-// 🆕 UPLOAD GENERAL IMAGE
-// ============================================
-export async function uploadGeneralImage(imageAsset) {
-  try {
-    if (!imageAsset?.uri) {
-      return { success: false, error: 'No image selected' };
-    }
-
-    const formData = buildFormData(imageAsset);
-
-    const response = await axios.post(
-      `${API_URL}/upload/general`,
-      formData,
-      {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 30000,
-      }
-    );
-
-    return {
-      success: true,
-      url: response.data.image_url,
-      public_id: response.data.public_id,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message || 'Upload failed',
-    };
-  }
-}
-
-// ============================================
-// 🆕 PICK AND UPLOAD (combined helper)
+// COMBINED PICK + UPLOAD
 // ============================================
 export async function pickAndUploadProfilePhoto(
   userId,
-  source = 'gallery' // 'gallery' | 'camera'
+  source = 'gallery',
+  onProgress = null
 ) {
-  let imageAsset;
-
-  if (source === 'camera') {
-    imageAsset = await takePhoto();
-  } else {
-    imageAsset = await pickImageFromGallery();
-  }
+  const imageAsset = source === 'camera'
+    ? await takePhoto()
+    : await pickImageFromGallery();
 
   if (!imageAsset) return { success: false, cancelled: true };
 
-  return await uploadProfilePhoto(userId, imageAsset);
+  return uploadProfilePhoto(userId, imageAsset, onProgress);
 }

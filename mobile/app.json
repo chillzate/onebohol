@@ -12,6 +12,15 @@
       "resizeMode": "contain",
       "backgroundColor": "#1C1710"
     },
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 3000,
+      "url": "https://u.expo.dev/c728d92b-ab88-4532-b505-d800ac8f270f"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.zavara.app"
@@ -36,6 +45,7 @@
     },
     "plugins": [
       "expo-secure-store",
+      "expo-updates",
       [
         "expo-location",
         {

@@ -1,7 +1,19 @@
 // ============================================
-// ZAVARA CART SCREEN - COMPLETE FIXED v2.1
+// ZAVARA CART SCREEN - v4.0
+// ✅ OrderSuccessModal connected (GrabFood style)
+// ✅ LoadingModal while placing order
+// ✅ ConfirmModal for clear cart
+// ✅ Haptics throughout
+// ✅ Order type detection (food vs market)
+// ✅ Confetti animation on success
 // ============================================
-import { useState, useRef } from 'react'; // 🔧 FIX: from 'react'
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  useEffect,
+} from 'react';
 import {
   View,
   Text,
@@ -10,12 +22,13 @@ import {
   TouchableOpacity,
   StatusBar,
   TextInput,
-  Alert,
-  ActivityIndicator,
   Image,
+  Animated,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
-// 🔧 FIX: Removed Animated (unused), removed useRef from RN
 import axios from 'axios';
+import * as Haptics from 'expo-haptics';
 import {
   colors,
   shadow,
@@ -23,205 +36,391 @@ import {
   shadowGold,
   borderRadius,
 } from '../theme';
-import { API_URL } from '../config';
+import { API_URL }   from '../config';
+import { showToast } from './ToastManager';
+import { useAppContext } from '../context/AppContext';
 
+// ✅ IMPORT ALL MODALS FROM CUSTOMTOAST
+import {
+  OrderSuccessModal,
+  LoadingModal,
+  ConfirmModal,
+} from './CustomToast';
+
+// ============================================
+// CONSTANTS
+// ============================================
+const DELIVERY_FEE      = 49;
+const FREE_DELIVERY_MIN = 500;
+
+const CATEGORY_EMOJI = {
+  seafood:    '🐟',
+  vegetables: '🥦',
+  rice:       '🌾',
+  fruits:     '🍌',
+  livestock:  '🐄',
+  other:      '🌿',
+};
+
+function getCategoryEmoji(category) {
+  return CATEGORY_EMOJI[category?.toLowerCase()] || '🌴';
+}
+
+// ============================================
+// CART ITEM - separate component
+// ============================================
+function CartItem({ item, onIncrease, onDecrease }) {
+  return (
+    <View style={styles.cartCard}>
+      {item.image_url ? (
+        <Image
+          source={{ uri: item.image_url }}
+          style={styles.cartItemImage}
+          resizeMode="cover"
+        />
+      ) : (
+        <View style={styles.cartItemEmoji}>
+          <Text style={styles.cartItemEmojiText}>
+            {getCategoryEmoji(item.category)}
+          </Text>
+        </View>
+      )}
+
+      <View style={styles.cartInfo}>
+        <Text style={styles.cartName} numberOfLines={1}>
+          {item.name}
+        </Text>
+        {(item.restaurant_name || item.seller_name) && (
+          <Text style={styles.cartFrom} numberOfLines={1}>
+            {item.order_type === 'food' ? '🍴' : '🏪'}{' '}
+            {item.restaurant_name || item.seller_name}
+          </Text>
+        )}
+        <Text style={styles.cartUnitPrice}>
+          ₱{item.price.toFixed(2)}{' '}
+          {item.unit ? `per ${item.unit}` : 'each'}
+        </Text>
+        <View style={styles.cartBottomRow}>
+          <Text style={styles.cartSubtotal}>
+            ₱{(item.price * item.quantity).toFixed(2)}
+          </Text>
+          <View style={[styles.orderTypeBadge, {
+            backgroundColor: item.order_type === 'food'
+              ? colors.cuisineBg : colors.farmerBg,
+          }]}>
+            <Text style={[styles.orderTypeBadgeText, {
+              color: item.order_type === 'food'
+                ? colors.cuisineColor
+                : colors.farmerColor,
+            }]}>
+              {item.order_type === 'food'
+                ? '🍴 Food' : '🌾 Market'}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.qtyWrap}>
+        <TouchableOpacity
+          style={styles.qtyBtn}
+          onPress={() => onDecrease(item)}
+          activeOpacity={0.8}>
+          <Text style={styles.qtyBtnText}>−</Text>
+        </TouchableOpacity>
+        <View style={styles.qtyNum}>
+          <Text style={styles.qtyNumText}>
+            {item.quantity}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={[styles.qtyBtn, styles.qtyBtnPlus]}
+          onPress={() => onIncrease(item.id)}
+          activeOpacity={0.8}>
+          <Text style={[styles.qtyBtnText,
+            { color: colors.textWhite }]}>+</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+// ============================================
+// PAYMENT OPTION - separate component
+// ============================================
+function PaymentOption({
+  icon,
+  title,
+  subtitle,
+  selected,
+  onSelect,
+  iconBg,
+}) {
+  return (
+    <TouchableOpacity
+      style={[
+        styles.paymentCard,
+        selected && styles.paymentCardActive,
+      ]}
+      onPress={() => {
+        Haptics.impactAsync(
+          Haptics.ImpactFeedbackStyle.Light
+        ).catch(() => {});
+        onSelect();
+      }}
+      activeOpacity={0.85}>
+      <View style={[styles.paymentIconWrap,
+        { backgroundColor: iconBg || colors.primaryPale }]}>
+        <Text style={styles.paymentIcon}>{icon}</Text>
+      </View>
+      <View style={styles.paymentInfo}>
+        <Text style={styles.paymentTitle}>{title}</Text>
+        <Text style={styles.paymentSub}>{subtitle}</Text>
+      </View>
+      <View style={[
+        styles.paymentRadio,
+        selected && styles.paymentRadioActive,
+      ]}>
+        {selected && (
+          <Text style={styles.paymentRadioCheck}>✓</Text>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// ============================================
+// MAIN CART SCREEN
+// ============================================
 export default function CartScreen({
   cart,
   setCart,
   userId,
   onBack,
-  onOrderPlaced, // 🔧 FIX: consistent prop name
+  onOrderPlaced,
 }) {
-  const [address, setAddress]           = useState('');
-  const [placing, setPlacing]           = useState(false);
-  const [orderSuccess, setOrderSuccess] = useState(false);
-  const [orderTotal, setOrderTotal]     = useState(0);
+  const [address, setAddress]               = useState('');
+  const [placing, setPlacing]               = useState(false);
   const [addressFocused, setAddressFocused] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('cod'); // 🆕
+  const [paymentMethod, setPaymentMethod]   = useState('cod');
 
-  // ── CART CALCULATIONS ───────────────────
-  const totalItems = cart.reduce(
-    (sum, i) => sum + i.quantity, 0
-  );
-  const subtotal = cart.reduce(
-    (sum, i) => sum + i.price * i.quantity, 0
-  );
-  // 🔧 Free delivery over ₱500
-  const deliveryFee = subtotal >= 500 ? 0 : 49;
-  const total = subtotal + deliveryFee;
+  // ✅ NEW MODAL STATES
+  const [showSuccess, setShowSuccess]       = useState(false);
+  const [showLoading, setShowLoading]       = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [orderTotal, setOrderTotal]         = useState(0);
+  const [orderType, setOrderType]           = useState('food');
+  const { saveCart, clearPersistedCart } = useAppContext();
 
-  // ── CART FUNCTIONS ──────────────────────
-  const increaseQty = (id) =>
-    setCart(cart.map(i =>
+  const progressAnim = useRef(new Animated.Value(0)).current;
+
+  // ── CART CALCULATIONS ────────────────────────
+  const cartTotals = useMemo(() => {
+    const totalItems = cart.reduce(
+      (sum, i) => sum + i.quantity, 0
+    );
+    const subtotal = cart.reduce(
+      (sum, i) => sum + i.price * i.quantity, 0
+    );
+    const deliveryFee = subtotal >= FREE_DELIVERY_MIN
+      ? 0 : DELIVERY_FEE;
+    const total    = subtotal + deliveryFee;
+    const progress = Math.min(
+      subtotal / FREE_DELIVERY_MIN, 1
+    );
+    return {
+      totalItems, subtotal,
+      deliveryFee, total, progress,
+    };
+  }, [cart]);
+
+  // ── DETECT ORDER TYPE ────────────────────────
+  // 🆕 Detects if cart is food, market, or mixed
+  const detectedOrderType = useMemo(() => {
+    const hasFood   = cart.some(
+      i => i.order_type === 'food' || i.menu_item_id
+    );
+    const hasMarket = cart.some(
+      i => i.order_type === 'market' || i.product_id
+    );
+    if (hasFood && hasMarket) return 'mixed';
+    if (hasFood) return 'food';
+    return 'market';
+  }, [cart]);
+
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: cartTotals.progress,
+      duration: 400,
+      useNativeDriver: false,
+    }).start();
+  }, [cartTotals.progress]);
+
+  // ── CART FUNCTIONS ───────────────────────────
+  const increaseQty = useCallback((id) => {
+  Haptics.impactAsync(
+    Haptics.ImpactFeedbackStyle.Light
+  ).catch(() => {});
+  setCart(prev => {
+    const updated = prev.map(i =>
       i.id === id
         ? { ...i, quantity: i.quantity + 1 }
         : i
-    ));
+    );
+    saveCart(updated); // ✅ Save after update
+    return updated;
+  });
+}, [setCart, saveCart]);
 
-  const decreaseQty = (id) => {
-    const item = cart.find(i => i.id === id);
-    if (item.quantity === 1) {
-      Alert.alert(
-        'Remove Item',
-        `Remove ${item.name} from cart?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Remove',
-            style: 'destructive',
-            onPress: () => setCart(
-              cart.filter(i => i.id !== id)
-            ),
-          },
-        ]
-      );
-    } else {
-      setCart(cart.map(i =>
-        i.id === id
+  const decreaseQty = useCallback((item) => {
+  if (item.quantity === 1) {
+    setCart(prev => {
+      const updated = prev.filter(i => i.id !== item.id);
+      saveCart(updated); // ✅ Save after remove
+      return updated;
+    });
+    showToast('info', 'Item Removed',
+      `${item.name} removed from cart`);
+  } else {
+    Haptics.impactAsync(
+      Haptics.ImpactFeedbackStyle.Light
+    ).catch(() => {});
+    setCart(prev => {
+      const updated = prev.map(i =>
+        i.id === item.id
           ? { ...i, quantity: i.quantity - 1 }
           : i
-      ));
-    }
-  };
-
-  const clearCart = () => {
-    Alert.alert(
-      'Clear Cart',
-      'Remove all items from your cart?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear All',
-          style: 'destructive',
-          onPress: () => setCart([]),
-        },
-      ]
-    );
-  };
-
-  const getCategoryEmoji = (category) => {
-    const map = {
-      seafood: '🐟', vegetables: '🥦',
-      rice: '🌾', fruits: '🍌',
-      livestock: '🐄', other: '🌿',
-    };
-    return map[category?.toLowerCase()] || '🌴';
-  };
-
-  // ── PLACE ORDER ─────────────────────────
-  const placeOrder = async () => {
-    if (!address.trim()) {
-      Alert.alert(
-        '📍 Address Required',
-        'Please enter your delivery address before placing your order.'
       );
+      saveCart(updated); // ✅ Save after update
+      return updated;
+    });
+  }
+}, [setCart, saveCart]);
+
+  // ✅ Clear cart now uses ConfirmModal
+  const handleClearCart = useCallback(() => {
+    Haptics.impactAsync(
+      Haptics.ImpactFeedbackStyle.Medium
+    ).catch(() => {});
+    setShowClearConfirm(true);
+  }, []);
+
+  const confirmClearCart = useCallback(() => {
+  setCart([]);
+  clearPersistedCart(); // ✅ Clear from storage too
+  Haptics.notificationAsync(
+    Haptics.NotificationFeedbackType.Success
+  ).catch(() => {});
+  showToast('info', 'Cart Cleared', 'All items removed');
+}, [setCart, clearPersistedCart]);
+
+  // ── PLACE ORDER ──────────────────────────────
+  const placeOrder = useCallback(async () => {
+    if (!address.trim()) {
+      showToast('warning', 'Address Required',
+        'Please enter your delivery address');
+      Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Warning
+      ).catch(() => {});
       return;
     }
     if (address.trim().length < 10) {
-      Alert.alert(
-        '📍 Address Too Short',
-        'Please enter a complete delivery address.'
-      );
+      showToast('warning', 'Address Too Short',
+        'Please enter a complete delivery address');
       return;
     }
 
+    // ✅ Show LoadingModal while placing
     setPlacing(true);
-    try {
-      // 🔧 FIX: Handle BOTH food and market orders
-      for (const item of cart) {
-        if (item.order_type === 'food' || item.menu_item_id) {
-          // Food order
-          await axios.post(
-            `${API_URL}/orders?buyer_id=${userId}`,
-            {
-              order_type: 'food',
-              menu_item_id: item.menu_item_id || item.id,
-              quantity: item.quantity,
-              delivery_address: address,
-              payment_method: paymentMethod,
+    setShowLoading(true);
+
+    let successCount = 0;
+    let failCount    = 0;
+    const finalTotal = cartTotals.total;
+
+    for (const item of cart) {
+      try {
+        const isFood =
+          item.order_type === 'food' ||
+          !!item.menu_item_id;
+
+        await axios.post(
+          `${API_URL}/orders?buyer_id=${userId}`,
+          {
+            order_type:       isFood ? 'food' : 'market',
+            menu_item_id:     isFood
+              ? (item.menu_item_id || item.id)
+              : undefined,
+            product_id:       !isFood
+              ? (item.product_id || item.id)
+              : undefined,
+            quantity:         item.quantity,
+            delivery_address: address.trim(),
+            payment_method:   paymentMethod,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
             },
-            { headers: { 'Content-Type': 'application/json' } }
-          );
-        } else {
-          // Market/product order
-          await axios.post(
-            `${API_URL}/orders?buyer_id=${userId}`,
-            {
-              order_type: 'market',
-              product_id: item.product_id || item.id,
-              quantity: item.quantity,
-              delivery_address: address,
-              payment_method: paymentMethod,
-            },
-            { headers: { 'Content-Type': 'application/json' } }
-          );
-        }
+          }
+        );
+        successCount++;
+      } catch {
+        failCount++;
       }
-
-      setOrderTotal(total);
-      setCart([]);
-      setOrderSuccess(true);
-    } catch (error) {
-      const msg = error.response?.data?.detail ||
-        'Could not place your order. Please check your connection.';
-      Alert.alert('Order Failed ❌', msg);
     }
-    setPlacing(false);
-  };
 
-  // ============================================
-  // SUCCESS SCREEN
-  // ============================================
-  if (orderSuccess) {
-    return (
-      <View style={styles.container}>
-        <StatusBar
-          backgroundColor={colors.headerBg}
-          barStyle="dark-content"
-        />
-        <View style={styles.successWrap}>
-          <View style={styles.successCircle}>
-            <Text style={styles.successEmoji}>✅</Text>
-          </View>
-          <Text style={styles.successTitle}>
-            Order Placed!
-          </Text>
-          <Text style={styles.successSub}>
-            Your order has been placed successfully.
-            {'\n'}We'll notify you when it's confirmed!
-          </Text>
-          <View style={styles.successTotalCard}>
-            <Text style={styles.successTotalLabel}>
-              TOTAL PAID
-            </Text>
-            <Text style={styles.successTotalValue}>
-              ₱{orderTotal.toFixed(2)}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.trackOrderBtn}
-            onPress={() => {
-              setOrderSuccess(false);
-              onOrderPlaced?.();
-            }}>
-            <Text style={styles.trackOrderBtnText}>
-              📦 TRACK MY ORDER
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.continueBrowsingBtn}
-            onPress={() => {
-              setOrderSuccess(false);
-              onBack?.();
-            }}>
-            <Text style={styles.continueBrowsingText}>
-              Continue Shopping
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
+    setPlacing(false);
+
+    // ✅ Hide LoadingModal
+    setShowLoading(false);
+
+    if (successCount > 0) {
+      // ✅ Haptic success
+      Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success
+      ).catch(() => {});
+
+      // ✅ Set order info for modal
+      setOrderTotal(finalTotal);
+      setOrderType(detectedOrderType === 'mixed'
+        ? 'food' : detectedOrderType
+      );
+
+      setCart([]);
+      clearPersistedCart(); // ✅ Clear storage on order success
+
+      // ✅ Show OrderSuccessModal
+      setShowSuccess(true);
+
+      if (failCount > 0) {
+        showToast('warning',
+          `${failCount} item(s) failed`,
+          'Some items could not be ordered'
+        );
+      }
+    } else {
+      Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Error
+      ).catch(() => {});
+      showToast('error', 'Order Failed',
+        'Could not place order. Check your connection.');
+    }
+  }, [
+    address, cart, userId,
+    paymentMethod, cartTotals.total,
+    detectedOrderType, setCart,
+  ]);
+
+  // ── HANDLE SUCCESS MODAL ACTIONS ─────────────
+  const handleTrackOrder = useCallback(() => {
+    setShowSuccess(false);
+    onOrderPlaced?.();
+  }, [onOrderPlaced]);
+
+  const handleContinueShopping = useCallback(() => {
+    setShowSuccess(false);
+    onBack?.();
+  }, [onBack]);
 
   // ============================================
   // EMPTY CART
@@ -233,15 +432,34 @@ export default function CartScreen({
           backgroundColor={colors.headerBg}
           barStyle="dark-content"
         />
+
+        {/* ✅ LoadingModal even on empty state */}
+        <LoadingModal
+          visible={showLoading}
+          message="Placing your order..."
+        />
+
+        {/* ✅ OrderSuccessModal */}
+        <OrderSuccessModal
+          visible={showSuccess}
+          onClose={handleContinueShopping}
+          total={orderTotal.toFixed(2)}
+          onTrack={handleTrackOrder}
+          paymentMethod={paymentMethod}
+          orderType={orderType}
+        />
+
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.headerBackBtn}
-            onPress={onBack}>
+            onPress={onBack}
+            activeOpacity={0.8}>
             <Text style={styles.headerBackText}>←</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>My Cart</Text>
           <View style={{ width: 38 }} />
         </View>
+
         <View style={styles.emptyWrap}>
           <View style={styles.emptyCircle}>
             <Text style={styles.emptyEmoji}>🛒</Text>
@@ -255,7 +473,8 @@ export default function CartScreen({
           </Text>
           <TouchableOpacity
             style={styles.emptyBtn}
-            onPress={onBack}>
+            onPress={onBack}
+            activeOpacity={0.85}>
             <Text style={styles.emptyBtnText}>
               Browse Now →
             </Text>
@@ -266,147 +485,140 @@ export default function CartScreen({
   }
 
   // ============================================
-  // CART SCREEN
+  // MAIN CART
   // ============================================
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={
+        Platform.OS === 'ios' ? 'padding' : undefined
+      }>
       <StatusBar
         backgroundColor={colors.headerBg}
         barStyle="dark-content"
+      />
+
+      {/* ✅ LOADING MODAL - shows while placing order */}
+      <LoadingModal
+        visible={showLoading}
+        message="Placing your order..."
+      />
+
+      {/* ✅ ORDER SUCCESS MODAL - GrabFood style! */}
+      <OrderSuccessModal
+        visible={showSuccess}
+        onClose={handleContinueShopping}
+        total={orderTotal.toFixed(2)}
+        onTrack={handleTrackOrder}
+        paymentMethod={paymentMethod}
+        orderType={orderType}
+      />
+
+      {/* ✅ CONFIRM MODAL - for clear cart */}
+      <ConfirmModal
+        visible={showClearConfirm}
+        onClose={() => setShowClearConfirm(false)}
+        onConfirm={confirmClearCart}
+        title="Clear Cart?"
+        message={`Remove all ${cartTotals.totalItems} items from your cart?`}
+        confirmText="Clear All"
+        cancelText="Keep Items"
+        dangerous={true}
       />
 
       {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerBackBtn}
-          onPress={onBack}>
+          onPress={onBack}
+          activeOpacity={0.8}>
           <Text style={styles.headerBackText}>←</Text>
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle}>My Cart</Text>
           <View style={styles.headerBadge}>
             <Text style={styles.headerBadgeText}>
-              {totalItems}{' '}
-              {totalItems === 1 ? 'item' : 'items'}
+              {cartTotals.totalItems}{' '}
+              {cartTotals.totalItems === 1
+                ? 'item' : 'items'}
             </Text>
           </View>
         </View>
+        {/* ✅ Clear now opens ConfirmModal */}
         <TouchableOpacity
           style={styles.clearBtn}
-          onPress={clearCart}>
+          onPress={handleClearCart}
+          activeOpacity={0.8}>
           <Text style={styles.clearBtnText}>Clear</Text>
         </TouchableOpacity>
       </View>
 
-      {/* FREE DELIVERY BANNER */}
-      {subtotal < 500 && (
-        <View style={styles.freeDeliveryBanner}>
-          <Text style={styles.freeDeliveryText}>
-            🚀 Add ₱{(500 - subtotal).toFixed(2)} more for
-            FREE delivery!
-          </Text>
-        </View>
-      )}
-      {subtotal >= 500 && (
-        <View style={[styles.freeDeliveryBanner,
-          { backgroundColor: colors.successPale,
-            borderColor: colors.success + '30' }]}>
-          <Text style={[styles.freeDeliveryText,
-            { color: colors.success }]}>
+      {/* FREE DELIVERY PROGRESS */}
+      <View style={styles.deliveryBanner}>
+        {cartTotals.deliveryFee === 0 ? (
+          <Text style={styles.deliveryBannerTextFree}>
             🎉 You got FREE delivery!
+          </Text>
+        ) : (
+          <>
+            <Text style={styles.deliveryBannerText}>
+              Add ₱{(FREE_DELIVERY_MIN -
+                cartTotals.subtotal).toFixed(2)} more
+              for FREE delivery!
+            </Text>
+            <View style={styles.deliveryProgressBg}>
+              <Animated.View style={[
+                styles.deliveryProgressFill,
+                {
+                  width: progressAnim.interpolate({
+                    inputRange:  [0, 1],
+                    outputRange: ['0%', '100%'],
+                  }),
+                },
+              ]} />
+            </View>
+          </>
+        )}
+      </View>
+
+      {/* ✅ 🆕 Order type banner for mixed carts */}
+      {detectedOrderType === 'mixed' && (
+        <View style={styles.mixedCartBanner}>
+          <Text style={styles.mixedCartIcon}>ℹ️</Text>
+          <Text style={styles.mixedCartText}>
+            Mixed cart: Food + Market items will be
+            placed as separate orders
           </Text>
         </View>
       )}
 
-      {/* SCROLL CONTENT */}
+      {/* SCROLL */}
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}>
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled">
 
         {/* ORDER ITEMS */}
         <Text style={styles.sectionLabel}>
           ORDER ITEMS
         </Text>
-
-        {cart.map((item, index) => (
-          <View key={item.id} style={styles.cartCard}>
-
-            {/* IMAGE or EMOJI */}
-            {item.image_url ? (
-              <Image
-                source={{ uri: item.image_url }}
-                style={styles.cartItemImage}
-                resizeMode="cover"
-              />
-            ) : (
-              <View style={styles.cartNumber}>
-                <Text style={styles.cartNumberText}>
-                  {getCategoryEmoji(item.category) ||
-                    (index + 1).toString()}
-                </Text>
-              </View>
-            )}
-
-            {/* INFO */}
-            <View style={styles.cartInfo}>
-              <Text style={styles.cartName}
-                numberOfLines={1}>
-                {item.name}
-              </Text>
-              <Text style={styles.cartUnitPrice}>
-                ₱{item.price.toFixed(2)}{' '}
-                {item.unit ? `per ${item.unit}` : 'each'}
-              </Text>
-              <Text style={styles.cartSubtotal}>
-                ₱{(item.price * item.quantity).toFixed(2)}
-              </Text>
-              {/* 🆕 Order type badge */}
-              <View style={[styles.orderTypeBadge, {
-                backgroundColor: item.order_type === 'food'
-                  ? colors.cuisineBg : colors.farmerBg,
-              }]}>
-                <Text style={[styles.orderTypeBadgeText, {
-                  color: item.order_type === 'food'
-                    ? colors.cuisineColor
-                    : colors.farmerColor,
-                }]}>
-                  {item.order_type === 'food'
-                    ? '🍴 Food' : '🌾 Market'}
-                </Text>
-              </View>
-            </View>
-
-            {/* QTY CONTROLS */}
-            <View style={styles.qtyWrap}>
-              <TouchableOpacity
-                style={styles.qtyBtn}
-                onPress={() => decreaseQty(item.id)}>
-                <Text style={styles.qtyBtnText}>−</Text>
-              </TouchableOpacity>
-              <View style={styles.qtyNum}>
-                <Text style={styles.qtyNumText}>
-                  {item.quantity}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[styles.qtyBtn, styles.qtyBtnPlus]}
-                onPress={() => increaseQty(item.id)}>
-                <Text style={[styles.qtyBtnText,
-                  { color: colors.textWhite }]}>
-                  +
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-          </View>
+        {cart.map((item) => (
+          <CartItem
+            key={item.id}
+            item={item}
+            onIncrease={increaseQty}
+            onDecrease={decreaseQty}
+          />
         ))}
 
         {/* DELIVERY ADDRESS */}
         <Text style={styles.sectionLabel}>
           DELIVERY ADDRESS
         </Text>
-        <View style={[styles.addressCard,
-          addressFocused && styles.addressCardFocused]}>
+        <View style={[
+          styles.addressCard,
+          addressFocused && styles.addressCardFocused,
+        ]}>
           <Text style={styles.addressIcon}>📍</Text>
           <TextInput
             style={styles.addressInput}
@@ -418,6 +630,7 @@ export default function CartScreen({
             numberOfLines={2}
             onFocus={() => setAddressFocused(true)}
             onBlur={() => setAddressFocused(false)}
+            textAlignVertical="top"
           />
         </View>
 
@@ -428,10 +641,10 @@ export default function CartScreen({
         <View style={styles.summaryCard}>
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>
-              Subtotal ({totalItems} items)
+              Subtotal ({cartTotals.totalItems} items)
             </Text>
             <Text style={styles.summaryValue}>
-              ₱{subtotal.toFixed(2)}
+              ₱{cartTotals.subtotal.toFixed(2)}
             </Text>
           </View>
           <View style={styles.summaryRow}>
@@ -439,10 +652,11 @@ export default function CartScreen({
               Delivery Fee
             </Text>
             <Text style={[styles.summaryValue,
-              deliveryFee === 0 && { color: colors.success }]}>
-              {deliveryFee === 0
+              cartTotals.deliveryFee === 0 &&
+              { color: colors.success }]}>
+              {cartTotals.deliveryFee === 0
                 ? '🎉 FREE'
-                : `₱${deliveryFee}.00`}
+                : `₱${cartTotals.deliveryFee}.00`}
             </Text>
           </View>
           <View style={styles.summaryRow}>
@@ -460,70 +674,33 @@ export default function CartScreen({
               TOTAL
             </Text>
             <Text style={styles.summaryTotalValue}>
-              ₱{total.toFixed(2)}
+              ₱{cartTotals.total.toFixed(2)}
             </Text>
           </View>
         </View>
 
-        {/* 🆕 PAYMENT METHOD SELECTOR */}
+        {/* PAYMENT METHOD */}
         <Text style={styles.sectionLabel}>
           PAYMENT METHOD
         </Text>
+        <PaymentOption
+          icon="💵"
+          title="Cash on Delivery"
+          subtitle="Pay when your order arrives"
+          selected={paymentMethod === 'cod'}
+          onSelect={() => setPaymentMethod('cod')}
+          iconBg={colors.primaryPale}
+        />
+        <PaymentOption
+          icon="📱"
+          title="GCash"
+          subtitle="Pay via GCash (screenshot required)"
+          selected={paymentMethod === 'gcash'}
+          onSelect={() => setPaymentMethod('gcash')}
+          iconBg={colors.infoPale}
+        />
 
-        {/* COD Option */}
-        <TouchableOpacity
-          style={[styles.paymentCard,
-            paymentMethod === 'cod' &&
-            styles.paymentCardActive]}
-          onPress={() => setPaymentMethod('cod')}>
-          <View style={styles.paymentIconWrap}>
-            <Text style={styles.paymentIcon}>💵</Text>
-          </View>
-          <View style={styles.paymentInfo}>
-            <Text style={styles.paymentTitle}>
-              Cash on Delivery
-            </Text>
-            <Text style={styles.paymentSub}>
-              Pay when your order arrives
-            </Text>
-          </View>
-          <View style={[styles.paymentRadio,
-            paymentMethod === 'cod' &&
-            styles.paymentRadioActive]}>
-            {paymentMethod === 'cod' && (
-              <Text style={styles.paymentRadioCheck}>✓</Text>
-            )}
-          </View>
-        </TouchableOpacity>
-
-        {/* GCash Option */}
-        <TouchableOpacity
-          style={[styles.paymentCard,
-            paymentMethod === 'gcash' &&
-            styles.paymentCardActive]}
-          onPress={() => setPaymentMethod('gcash')}>
-          <View style={[styles.paymentIconWrap,
-            { backgroundColor: colors.infoPale }]}>
-            <Text style={styles.paymentIcon}>📱</Text>
-          </View>
-          <View style={styles.paymentInfo}>
-            <Text style={styles.paymentTitle}>
-              GCash
-            </Text>
-            <Text style={styles.paymentSub}>
-              Pay via GCash (screenshot required)
-            </Text>
-          </View>
-          <View style={[styles.paymentRadio,
-            paymentMethod === 'gcash' &&
-            styles.paymentRadioActive]}>
-            {paymentMethod === 'gcash' && (
-              <Text style={styles.paymentRadioCheck}>✓</Text>
-            )}
-          </View>
-        </TouchableOpacity>
-
-        {/* DELIVERY INFO */}
+        {/* DELIVERY NOTES */}
         <View style={styles.noteCard}>
           <View style={styles.noteRow}>
             <Text style={styles.noteIcon}>🛵</Text>
@@ -545,20 +722,21 @@ export default function CartScreen({
           </View>
         </View>
 
+        <View style={{ height: 10 }} />
       </ScrollView>
 
       {/* CHECKOUT FOOTER */}
       <View style={styles.checkoutFooter}>
         <View style={styles.checkoutInfo}>
           <Text style={styles.checkoutLabel}>
-            Total Amount
+            TOTAL AMOUNT
           </Text>
           <Text style={styles.checkoutTotal}>
-            ₱{total.toFixed(2)}
+            ₱{cartTotals.total.toFixed(2)}
           </Text>
-          {deliveryFee === 0 && (
+          {cartTotals.deliveryFee === 0 && (
             <Text style={styles.checkoutFreeTag}>
-              🎉 Free Delivery!
+              🎉 Free Delivery Included!
             </Text>
           )}
         </View>
@@ -568,21 +746,15 @@ export default function CartScreen({
             placing && styles.checkoutBtnDisabled,
           ]}
           onPress={placeOrder}
-          disabled={placing}>
-          {placing ? (
-            <ActivityIndicator
-              size="small"
-              color={colors.textWhite}
-            />
-          ) : (
-            <Text style={styles.checkoutBtnText}>
-              🚀 PLACE ORDER
-            </Text>
-          )}
+          disabled={placing}
+          activeOpacity={0.85}>
+          <Text style={styles.checkoutBtnText}>
+            🚀 PLACE ORDER
+          </Text>
         </TouchableOpacity>
       </View>
 
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -596,7 +768,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
 
-  // ── HEADER ──────────────────────────────
+  // ── HEADER ──────────────────────────────────
   header: {
     backgroundColor: colors.headerBg,
     paddingTop: 52,
@@ -610,8 +782,7 @@ const styles = StyleSheet.create({
     ...shadow,
   },
   headerBackBtn: {
-    width: 38,
-    height: 38,
+    width: 38, height: 38,
     borderRadius: 12,
     backgroundColor: colors.inputBackground,
     alignItems: 'center',
@@ -647,8 +818,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   clearBtn: {
-    width: 38,
-    height: 38,
+    width: 38, height: 38,
     borderRadius: 12,
     backgroundColor: colors.dangerPale,
     alignItems: 'center',
@@ -662,28 +832,64 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  // 🆕 FREE DELIVERY BANNER ────────────────
-  freeDeliveryBanner: {
+  // ── DELIVERY BANNER ─────────────────────────
+  deliveryBanner: {
     backgroundColor: colors.warningPale,
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: colors.warning + '30',
+    borderBottomColor: colors.warning + '25',
+    gap: 8,
   },
-  freeDeliveryText: {
+  deliveryBannerText: {
     color: colors.warning,
     fontSize: 12,
     fontWeight: '700',
     textAlign: 'center',
   },
+  deliveryBannerTextFree: {
+    color: colors.success,
+    fontSize: 12,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  deliveryProgressBg: {
+    height: 4,
+    backgroundColor: colors.border,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  deliveryProgressFill: {
+    height: '100%',
+    backgroundColor: colors.warning,
+    borderRadius: 2,
+  },
 
-  // ── SCROLL ──────────────────────────────
+  // ✅ 🆕 MIXED CART BANNER ─────────────────────
+  mixedCartBanner: {
+    backgroundColor: colors.infoPale,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.info + '20',
+  },
+  mixedCartIcon: { fontSize: 16 },
+  mixedCartText: {
+    color: colors.info,
+    fontSize: 11,
+    fontWeight: '600',
+    flex: 1,
+    lineHeight: 16,
+  },
+
+  // ── SCROLL ──────────────────────────────────
   scrollContent: {
     padding: 20,
     paddingBottom: 140,
   },
-
-  // ── SECTION LABEL ───────────────────────
   sectionLabel: {
     color: colors.textLight,
     fontSize: 10,
@@ -693,7 +899,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  // ── CART CARD ───────────────────────────
+  // ── CART CARD ───────────────────────────────
   cartCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
@@ -706,16 +912,13 @@ const styles = StyleSheet.create({
     gap: 12,
     ...shadow,
   },
-  // 🆕 Image support
   cartItemImage: {
-    width: 48,
-    height: 48,
+    width: 52, height: 52,
     borderRadius: 14,
     backgroundColor: colors.inputBackground,
   },
-  cartNumber: {
-    width: 44,
-    height: 44,
+  cartItemEmoji: {
+    width: 52, height: 52,
     borderRadius: 14,
     backgroundColor: colors.primaryPale,
     alignItems: 'center',
@@ -723,48 +926,53 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderGold,
   },
-  cartNumberText: {
-    fontSize: 22,
-  },
-  cartInfo: { flex: 1 },
+  cartItemEmojiText: { fontSize: 24 },
+  cartInfo:          { flex: 1 },
   cartName: {
     fontSize: 14,
     fontWeight: '800',
     color: colors.textDark,
     marginBottom: 2,
   },
+  cartFrom: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginBottom: 2,
+    fontWeight: '600',
+  },
   cartUnitPrice: {
     fontSize: 11,
     color: colors.textMuted,
-    marginBottom: 2,
-  },
-  cartSubtotal: {
-    fontSize: 14,
-    color: colors.primary,
-    fontWeight: '900',
     marginBottom: 4,
   },
-  // 🆕 Order type badge
+  cartBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cartSubtotal: {
+    fontSize: 15,
+    color: colors.primary,
+    fontWeight: '900',
+  },
   orderTypeBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: borderRadius.small,
-    alignSelf: 'flex-start',
   },
   orderTypeBadgeText: {
     fontSize: 9,
     fontWeight: '800',
   },
 
-  // ── QTY CONTROLS ────────────────────────
+  // ── QTY ─────────────────────────────────────
   qtyWrap: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     alignItems: 'center',
     gap: 6,
   },
   qtyBtn: {
-    width: 32,
-    height: 32,
+    width: 32, height: 32,
     borderRadius: 10,
     backgroundColor: colors.inputBackground,
     alignItems: 'center',
@@ -783,8 +991,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   qtyNum: {
-    width: 34,
-    height: 32,
+    width: 32, height: 32,
     borderRadius: 10,
     backgroundColor: colors.primaryPale,
     alignItems: 'center',
@@ -798,7 +1005,7 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
 
-  // ── ADDRESS ─────────────────────────────
+  // ── ADDRESS ─────────────────────────────────
   addressCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
@@ -822,9 +1029,10 @@ const styles = StyleSheet.create({
     color: colors.textDark,
     lineHeight: 22,
     minHeight: 44,
+    paddingTop: 0,
   },
 
-  // ── SUMMARY ─────────────────────────────
+  // ── SUMMARY ─────────────────────────────────
   summaryCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
@@ -871,7 +1079,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
-  // 🆕 PAYMENT METHOD ──────────────────────
+  // ── PAYMENT ─────────────────────────────────
   paymentCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
@@ -889,17 +1097,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primaryPale,
   },
   paymentIconWrap: {
-    width: 46,
-    height: 46,
+    width: 46, height: 46,
     borderRadius: 14,
-    backgroundColor: colors.primaryPale,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.borderGold,
   },
-  paymentIcon: { fontSize: 24 },
-  paymentInfo: { flex: 1 },
+  paymentIcon:  { fontSize: 24 },
+  paymentInfo:  { flex: 1 },
   paymentTitle: {
     fontSize: 14,
     fontWeight: '800',
@@ -911,8 +1117,7 @@ const styles = StyleSheet.create({
     color: colors.textLight,
   },
   paymentRadio: {
-    width: 24,
-    height: 24,
+    width: 24, height: 24,
     borderRadius: 12,
     borderWidth: 2,
     borderColor: colors.border,
@@ -929,7 +1134,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
-  // ── NOTE CARD ───────────────────────────
+  // ── NOTE CARD ───────────────────────────────
   noteCard: {
     backgroundColor: colors.primaryPale,
     borderRadius: borderRadius.xlarge,
@@ -937,7 +1142,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderGold,
     gap: 10,
-    marginBottom: 10,
     marginTop: 10,
   },
   noteRow: {
@@ -953,7 +1157,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // ── EMPTY ───────────────────────────────
+  // ── EMPTY ───────────────────────────────────
   emptyWrap: {
     flex: 1,
     alignItems: 'center',
@@ -961,8 +1165,7 @@ const styles = StyleSheet.create({
     padding: 40,
   },
   emptyCircle: {
-    width: 120,
-    height: 120,
+    width: 120, height: 120,
     borderRadius: 60,
     backgroundColor: colors.primaryPale,
     alignItems: 'center',
@@ -972,7 +1175,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderGold,
     ...shadowGold,
   },
-  emptyEmoji: { fontSize: 55 },
+  emptyEmoji:  { fontSize: 55 },
   emptyTitle: {
     fontSize: 24,
     fontWeight: '900',
@@ -999,86 +1202,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  // ── SUCCESS SCREEN ──────────────────────
-  successWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 40,
-  },
-  successCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: colors.successPale,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 24,
-    borderWidth: 2,
-    borderColor: colors.success + '40',
-  },
-  successEmoji: { fontSize: 60 },
-  successTitle: {
-    fontSize: 30,
-    fontWeight: '900',
-    color: colors.textDark,
-    marginBottom: 10,
-  },
-  successSub: {
-    fontSize: 14,
-    color: colors.textLight,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 28,
-  },
-  successTotalCard: {
-    backgroundColor: colors.dark,
-    borderRadius: borderRadius.xlarge,
-    padding: 20,
-    width: '100%',
-    alignItems: 'center',
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: colors.borderGold,
-  },
-  successTotalLabel: {
-    color: colors.textLight,
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 2,
-    marginBottom: 8,
-  },
-  successTotalValue: {
-    color: colors.primaryLight,
-    fontSize: 36,
-    fontWeight: '900',
-  },
-  trackOrderBtn: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: 28,
-    paddingVertical: 16,
-    borderRadius: borderRadius.large,
-    width: '100%',
-    alignItems: 'center',
-    marginBottom: 12,
-    ...shadowGold,
-  },
-  trackOrderBtnText: {
-    color: colors.textWhite,
-    fontWeight: '900',
-    fontSize: 14,
-    letterSpacing: 0.5,
-  },
-  continueBrowsingBtn: {
-    paddingVertical: 12,
-  },
-  continueBrowsingText: {
-    color: colors.textLight,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-
-  // ── CHECKOUT FOOTER ─────────────────────
+  // ── CHECKOUT FOOTER ─────────────────────────
   checkoutFooter: {
     position: 'absolute',
     bottom: 0,
@@ -1094,10 +1218,10 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     ...shadowMd,
   },
-  checkoutInfo: { flex: 1 },
+  checkoutInfo:  { flex: 1 },
   checkoutLabel: {
     color: colors.textMuted,
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     letterSpacing: 1.5,
     marginBottom: 2,

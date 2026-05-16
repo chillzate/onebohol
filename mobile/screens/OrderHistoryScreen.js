@@ -1,5 +1,9 @@
 // ============================================
-// ZAVARA ORDER HISTORY SCREEN - v3.0
+// ZAVARA ORDER HISTORY SCREEN - v5.0
+// ✅ Feature E connected (smart polling)
+// ✅ Uses new /orders/user/{id}/history
+// ✅ OrderTrackingScreen connected
+// ✅ Cancel uses correct endpoint
 // ============================================
 import {
   useEffect,
@@ -17,15 +21,10 @@ import {
   ActivityIndicator,
   StatusBar,
   RefreshControl,
-  Modal,
-  TextInput,
   Alert,
-  Animated,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
 } from 'react-native';
 import axios from 'axios';
+import * as Haptics from 'expo-haptics';
 import {
   colors,
   shadow,
@@ -33,11 +32,13 @@ import {
   shadowGold,
   borderRadius,
 } from '../theme';
-import { showToast } from './ToastManager';
-import { API_URL } from '../config';
+import { showToast }          from './ToastManager';
+import { API_URL }            from '../config';
+import ReviewScreen           from './ReviewScreen';
+import OrderTrackingScreen    from './OrderTrackingScreen';
 
 // ============================================
-// CONSTANTS (outside component = no re-creation)
+// CONSTANTS (same as before)
 // ============================================
 const FILTERS = [
   'All', 'Pending', 'Confirmed',
@@ -110,196 +111,8 @@ const STATUS_ORDER = [
   'preparing', 'delivering', 'delivered',
 ];
 
-const RATING_LABELS = {
-  1: 'Poor 😞',
-  2: 'Fair 😐',
-  3: 'Good 🙂',
-  4: 'Great 😊',
-  5: 'Excellent! 🤩',
-};
-
-const QUICK_TAGS = [
-  '😋 Delicious',
-  '🚀 Fast Delivery',
-  '📦 Good Packaging',
-  '💰 Worth the Price',
-  '🌟 Will Order Again',
-  '🤝 Great Service',
-];
-
 // ============================================
-// REVIEW MODAL - separate component
-// ← Prevents keyboard dismiss bug
-// ============================================
-function ReviewModal({
-  visible,
-  order,
-  onClose,
-  onSubmit,
-  submitting,
-}) {
-  const [rating, setRating]   = useState(0);
-  const [comment, setComment] = useState('');
-
-  // Reset when modal opens
-  useEffect(() => {
-    if (visible) {
-      setRating(0);
-      setComment('');
-    }
-  }, [visible]);
-
-  const toggleTag = useCallback((tag) => {
-    setComment(prev =>
-      prev.includes(tag)
-        ? prev.replace(tag, '').trim()
-        : prev ? `${prev} ${tag}` : tag
-    );
-  }, []);
-
-  const handleSubmit = () => {
-    if (rating === 0) {
-      showToast('warning', 'Select Rating',
-        'Please select a star rating!');
-      return;
-    }
-    onSubmit({ rating, comment });
-  };
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHandle} />
-
-            {/* Title */}
-            <Text style={styles.modalTitle}>
-              Rate Your Order
-            </Text>
-            <Text style={styles.modalSub}>
-              Order #{String(order?.id || 0).padStart(4, '0')}
-            </Text>
-
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled">
-
-              {/* STARS */}
-              <View style={styles.starsRow}>
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <TouchableOpacity
-                    key={star}
-                    onPress={() => setRating(star)}
-                    style={styles.starBtn}
-                    activeOpacity={0.7}>
-                    <Animated.Text style={[
-                      styles.starIcon,
-                      star <= rating && styles.starActive,
-                    ]}>
-                      {star <= rating ? '⭐' : '☆'}
-                    </Animated.Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Rating label */}
-              <Text style={styles.ratingLabel}>
-                {rating > 0
-                  ? RATING_LABELS[rating]
-                  : 'Tap a star to rate'}
-              </Text>
-
-              {/* Quick tags */}
-              <Text style={styles.tagsTitle}>
-                QUICK FEEDBACK
-              </Text>
-              <View style={styles.tagsRow}>
-                {QUICK_TAGS.map((tag) => (
-                  <TouchableOpacity
-                    key={tag}
-                    style={[
-                      styles.tag,
-                      comment.includes(tag) && styles.tagActive,
-                    ]}
-                    onPress={() => toggleTag(tag)}
-                    activeOpacity={0.8}>
-                    <Text style={[
-                      styles.tagText,
-                      comment.includes(tag) &&
-                      styles.tagTextActive,
-                    ]}>
-                      {tag}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Comment input */}
-              <Text style={styles.tagsTitle}>
-                ADDITIONAL COMMENTS
-              </Text>
-              <TextInput
-                style={styles.commentInput}
-                placeholder="Share more about your experience..."
-                placeholderTextColor={colors.textMuted}
-                value={comment}
-                onChangeText={setComment}
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-
-              {/* Buttons */}
-              <View style={styles.modalBtns}>
-                <TouchableOpacity
-                  style={styles.skipBtn}
-                  onPress={onClose}
-                  activeOpacity={0.8}>
-                  <Text style={styles.skipBtnText}>
-                    Maybe Later
-                  </Text>
-                </TouchableOpacity>
-
-                {submitting ? (
-                  <View style={[styles.submitBtn,
-                    { justifyContent: 'center' }]}>
-                    <ActivityIndicator color="#FFF" />
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    style={[
-                      styles.submitBtn,
-                      rating === 0 && styles.submitBtnDisabled,
-                    ]}
-                    onPress={handleSubmit}
-                    disabled={rating === 0}
-                    activeOpacity={0.85}>
-                    <Text style={styles.submitBtnText}>
-                      ⭐ Submit Review
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              <View style={{ height: 16 }} />
-            </ScrollView>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-// ============================================
-// ORDER CARD - separate component
-// ← Prevents full list re-render on expand
+// ORDER CARD
 // ============================================
 function OrderCard({
   item,
@@ -307,10 +120,11 @@ function OrderCard({
   onToggle,
   onCancel,
   onReview,
+  onTrack,
 }) {
-  const animHeight = useRef(new Animated.Value(0)).current;
-
-  const status       = STATUS_CONFIG[item.status?.toLowerCase()] || {
+  const status = STATUS_CONFIG[
+    item.status?.toLowerCase()
+  ] || {
     color:  colors.textLight,
     bg:     colors.inputBackground,
     border: colors.border,
@@ -321,48 +135,63 @@ function OrderCard({
   const currentIndex = STATUS_ORDER.indexOf(
     item.status?.toLowerCase()
   );
-  const isCancelled  = item.status?.toLowerCase() === 'cancelled';
-  const isDelivered  = item.status?.toLowerCase() === 'delivered';
-  const isPending    = item.status?.toLowerCase() === 'pending';
-  const orderTotal   = item.grand_total || item.total_price || 0;
+  const isCancelled = item.status?.toLowerCase() === 'cancelled';
+  const isDelivered = item.status?.toLowerCase() === 'delivered';
+  const isPending   = item.status?.toLowerCase() === 'pending';
+  const isActive    = [
+    'confirmed', 'preparing',
+    'ready', 'delivering',
+  ].includes(item.status?.toLowerCase());
+  const orderTotal  = item.grand_total || item.total_price || 0;
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     try {
-      return new Date(dateString).toLocaleDateString('en-PH', {
-        month:  'short',
-        day:    'numeric',
-        year:   'numeric',
-        hour:   '2-digit',
-        minute: '2-digit',
-      });
+      return new Date(dateString).toLocaleDateString(
+        'en-PH',
+        {
+          month:  'short',
+          day:    'numeric',
+          year:   'numeric',
+          hour:   '2-digit',
+          minute: '2-digit',
+        }
+      );
     } catch { return 'N/A'; }
   };
 
   return (
     <View style={styles.orderCard}>
 
-      {/* ── ALWAYS VISIBLE TOP ── */}
+      {/* ACTIVE INDICATOR */}
+      {isActive && (
+        <View style={styles.activeBar}>
+          <Text style={styles.activeBarText}>
+            ● LIVE TRACKING AVAILABLE
+          </Text>
+        </View>
+      )}
+
+      {/* CARD TOP */}
       <TouchableOpacity
         style={styles.orderCardTop}
         onPress={onToggle}
         activeOpacity={0.85}>
 
         <View style={styles.orderCardTopLeft}>
-          {/* Order type pill */}
           <View style={[styles.orderTypePill, {
             backgroundColor: item.order_type === 'food'
               ? colors.cuisineBg : colors.farmerBg,
           }]}>
             <Text style={[styles.orderTypePillText, {
               color: item.order_type === 'food'
-                ? colors.cuisineColor : colors.farmerColor,
+                ? colors.cuisineColor
+                : colors.farmerColor,
             }]}>
               {item.order_type === 'food'
                 ? '🍴 Food' : '🌾 Market'}
             </Text>
           </View>
-
           <Text style={styles.orderId}>
             #{String(item.id).padStart(4, '0')}
           </Text>
@@ -372,7 +201,6 @@ function OrderCard({
         </View>
 
         <View style={styles.orderCardTopRight}>
-          {/* Status badge */}
           <View style={[styles.statusBadge, {
             backgroundColor: status.bg,
             borderColor:     status.border,
@@ -385,8 +213,6 @@ function OrderCard({
               {status.label}
             </Text>
           </View>
-
-          {/* Total + expand */}
           <View style={styles.totalExpandRow}>
             <Text style={styles.cardTotal}>
               ₱{orderTotal.toFixed(2)}
@@ -398,15 +224,12 @@ function OrderCard({
         </View>
       </TouchableOpacity>
 
-      {/* ── EXPANDED SECTION ── */}
+      {/* EXPANDED */}
       {isExpanded && (
         <View>
           <View style={styles.cardDivider} />
 
-          {/* Details */}
           <View style={styles.orderDetails}>
-
-            {/* Quantity */}
             <View style={styles.detailRow}>
               <View style={styles.detailIconWrap}>
                 <Text style={styles.detailIcon}>📦</Text>
@@ -420,7 +243,6 @@ function OrderCard({
               </View>
             </View>
 
-            {/* Product name if available */}
             {item.product_name && (
               <View style={styles.detailRow}>
                 <View style={styles.detailIconWrap}>
@@ -435,7 +257,6 @@ function OrderCard({
               </View>
             )}
 
-            {/* Delivery address */}
             {item.delivery_address && (
               <View style={styles.detailRow}>
                 <View style={styles.detailIconWrap}>
@@ -452,7 +273,6 @@ function OrderCard({
               </View>
             )}
 
-            {/* Payment */}
             {item.payment_method && (
               <View style={styles.detailRow}>
                 <View style={styles.detailIconWrap}>
@@ -477,32 +297,19 @@ function OrderCard({
                 </View>
               </View>
             )}
-
-            {/* Seller / Restaurant */}
-            {(item.seller_name || item.restaurant_name) && (
-              <View style={styles.detailRow}>
-                <View style={styles.detailIconWrap}>
-                  <Text style={styles.detailIcon}>🏪</Text>
-                </View>
-                <View style={styles.detailInfo}>
-                  <Text style={styles.detailLabel}>FROM</Text>
-                  <Text style={styles.detailValue}>
-                    {item.seller_name || item.restaurant_name}
-                  </Text>
-                </View>
-              </View>
-            )}
           </View>
 
-          {/* Total */}
+          {/* TOTAL */}
           <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>TOTAL AMOUNT</Text>
+            <Text style={styles.totalLabel}>
+              TOTAL AMOUNT
+            </Text>
             <Text style={styles.totalValue}>
               ₱{orderTotal.toFixed(2)}
             </Text>
           </View>
 
-          {/* Tracker */}
+          {/* MINI TRACKER */}
           {!isCancelled && (
             <View style={styles.trackerWrap}>
               <Text style={styles.trackerTitle}>
@@ -512,10 +319,12 @@ function OrderCard({
                 {TRACKER_STEPS.map((step, index) => {
                   const isDone   = index <= currentIndex;
                   const isActive = index === currentIndex;
-                  const isLast   = index === TRACKER_STEPS.length - 1;
+                  const isLast   =
+                    index === TRACKER_STEPS.length - 1;
                   return (
-                    <View key={step.key} style={styles.trackerStep}>
-                      {/* Connector line */}
+                    <View
+                      key={step.key}
+                      style={styles.trackerStep}>
                       {!isLast && (
                         <View style={[
                           styles.trackerLine,
@@ -523,7 +332,6 @@ function OrderCard({
                           styles.trackerLineDone,
                         ]} />
                       )}
-                      {/* Dot */}
                       <View style={[
                         styles.trackerDot,
                         isDone   && styles.trackerDotDone,
@@ -546,7 +354,7 @@ function OrderCard({
             </View>
           )}
 
-          {/* Cancelled banner */}
+          {/* CANCELLED BANNER */}
           {isCancelled && (
             <View style={styles.cancelledBanner}>
               <Text style={styles.cancelledIcon}>❌</Text>
@@ -555,37 +363,66 @@ function OrderCard({
                   Order Cancelled
                 </Text>
                 <Text style={styles.cancelledSub}>
-                  This order was cancelled
+                  {item.cancel_reason || 'This order was cancelled'}
                 </Text>
               </View>
             </View>
           )}
 
-          {/* Action buttons */}
-          {(isPending || isDelivered) && (
-            <View style={styles.actionBtns}>
-              {isPending && (
-                <TouchableOpacity
-                  style={styles.cancelOrderBtn}
-                  onPress={onCancel}
-                  activeOpacity={0.8}>
-                  <Text style={styles.cancelOrderBtnText}>
-                    ❌ Cancel Order
-                  </Text>
-                </TouchableOpacity>
-              )}
-              {isDelivered && (
-                <TouchableOpacity
-                  style={styles.reviewBtn}
-                  onPress={onReview}
-                  activeOpacity={0.8}>
-                  <Text style={styles.reviewBtnText}>
-                    ⭐ Rate This Order
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
+          {/* ACTION BUTTONS */}
+          <View style={styles.actionBtns}>
+            {/* ✅ NEW - Track button for active orders */}
+            {(isActive || isPending) && (
+              <TouchableOpacity
+                style={styles.trackBtn}
+                onPress={() => {
+                  Haptics.impactAsync(
+                    Haptics.ImpactFeedbackStyle.Light
+                  ).catch(() => {});
+                  onTrack();
+                }}
+                activeOpacity={0.8}>
+                <Text style={styles.trackBtnText}>
+                  🗺️ Track Order
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {isPending && (
+              <TouchableOpacity
+                style={styles.cancelOrderBtn}
+                onPress={onCancel}
+                activeOpacity={0.8}>
+                <Text style={styles.cancelOrderBtnText}>
+                  ❌ Cancel Order
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {isDelivered && !item.is_reviewed && (
+              <TouchableOpacity
+                style={styles.reviewBtn}
+                onPress={() => {
+                  Haptics.impactAsync(
+                    Haptics.ImpactFeedbackStyle.Medium
+                  ).catch(() => {});
+                  onReview();
+                }}
+                activeOpacity={0.8}>
+                <Text style={styles.reviewBtnText}>
+                  ⭐ Rate This Order
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {isDelivered && item.is_reviewed && (
+              <View style={styles.reviewedBadge}>
+                <Text style={styles.reviewedText}>
+                  ✅ Already Reviewed
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
       )}
     </View>
@@ -598,139 +435,215 @@ function OrderCard({
 export default function OrderHistoryScreen({
   userId,
   onBack,
+  onOpenTracking,   // ✅ ADD THIS LINE
 }) {
-  const [orders, setOrders]               = useState([]);
-  const [loading, setLoading]             = useState(true);
-  const [refreshing, setRefreshing]       = useState(false);
-  const [selectedFilter, setSelectedFilter] = useState('All');
-  const [expandedId, setExpandedId]       = useState(null);
+  const [orders, setOrders]         = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedFilter, setSelectedFilter] =
+    useState('All');
+  const [expandedId, setExpandedId] = useState(null);
+  const [page, setPage]             = useState(1);
+  const [hasMore, setHasMore]       = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  // Review states
-  const [showReview, setShowReview]       = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState(null);
-  const [submitting, setSubmitting]       = useState(false);
+  // Screen states
+  const [showReviewScreen, setShowReviewScreen] =
+    useState(false);
+  const [selectedOrder, setSelectedOrder] =
+    useState(null);
 
-  // ── FETCH ORDERS ─────────────────────────────
-  const fetchOrders = useCallback(async () => {
+  // ✅ NEW - Order Tracking Screen
+  const [showTracking, setShowTracking] = useState(false);
+  const [trackingOrderId, setTrackingOrderId] =
+    useState(null);
+
+  // ── FETCH ORDERS (paginated) ──────────────
+  const fetchOrders = useCallback(async (
+    pageNum = 1,
+    append = false
+  ) => {
     try {
-      const response = await axios.get(
-        `${API_URL}/orders/user/${userId}`,
-        { timeout: 10000 }
+      const res = await axios.get(
+        // ✅ Using new paginated endpoint
+        `${API_URL}/orders/user/${userId}/history`,
+        {
+          params: {
+            page:          pageNum,
+            limit:         10,
+            status_filter: selectedFilter === 'All'
+              ? undefined
+              : selectedFilter.toLowerCase(),
+          },
+          timeout: 10000,
+        }
       );
-      const sorted = (response.data || []).sort(
-        (a, b) =>
-          new Date(b.created_at) - new Date(a.created_at)
-      );
-      setOrders(sorted);
+
+      const data = res.data;
+      const newOrders = data.orders || [];
+
+      if (append) {
+        setOrders(prev => [...prev, ...newOrders]);
+      } else {
+        setOrders(newOrders);
+      }
+
+      setHasMore(data.has_next || false);
+      setPage(pageNum);
+
     } catch (err) {
       console.log('Orders error:', err?.message);
-      setOrders([]);
-      showToast('error', 'Could not load orders',
-        'Pull down to retry');
+      if (!append) setOrders([]);
+      showToast(
+        'error',
+        'Could not load orders',
+        'Pull down to retry'
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
-  }, [userId]);
+  }, [userId, selectedFilter]);
 
-  useEffect(() => { fetchOrders(); }, []);
+  useEffect(() => {
+    setLoading(true);
+    setPage(1);
+    fetchOrders(1, false);
+  }, [selectedFilter]);
+
+  useEffect(() => {
+    fetchOrders(1, false);
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchOrders();
+    await fetchOrders(1, false);
   }, [fetchOrders]);
 
-  // ── CANCEL ORDER ─────────────────────────────
+  const onLoadMore = useCallback(() => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    fetchOrders(page + 1, true);
+  }, [loadingMore, hasMore, page, fetchOrders]);
+
+  // ── CANCEL ORDER ──────────────────────────
   const handleCancelOrder = useCallback((order) => {
+    Haptics.notificationAsync(
+      Haptics.NotificationFeedbackType.Warning
+    ).catch(() => {});
+
     Alert.alert(
       'Cancel Order',
-      `Cancel Order #${String(order.id).padStart(4, '0')}?\n\nThis cannot be undone.`,
+      `Cancel Order #${String(order.id).padStart(4, '0')}?`,
       [
         { text: 'Keep Order', style: 'cancel' },
         {
-          text: 'Yes, Cancel',
+          text:  'Yes, Cancel',
           style: 'destructive',
           onPress: async () => {
             try {
+              // ✅ Using correct cancel endpoint
               await axios.patch(
-                `${API_URL}/orders/${order.id}/status` +
-                `?new_status=cancelled`
+                `${API_URL}/orders/${order.id}/cancel`,
+                null,
+                {
+                  params: {
+                    buyer_id: userId,
+                    reason:   'Cancelled by buyer',
+                  },
+                  timeout: 10000,
+                }
               );
-              showToast('info', 'Order Cancelled',
-                'Your order has been cancelled.');
-              fetchOrders();
+              Haptics.notificationAsync(
+                Haptics.NotificationFeedbackType.Success
+              ).catch(() => {});
+              showToast(
+                'info',
+                'Order Cancelled',
+                'Your order has been cancelled.'
+              );
+              fetchOrders(1, false);
             } catch {
-              showToast('error', 'Error',
-                'Could not cancel. Try again.');
+              Haptics.notificationAsync(
+                Haptics.NotificationFeedbackType.Error
+              ).catch(() => {});
+              showToast(
+                'error',
+                'Error',
+                'Could not cancel. Try again.'
+              );
             }
           },
         },
       ]
     );
+  }, [userId, fetchOrders]);
+
+  // ── REVIEW ────────────────────────────────
+  const handleOpenReview = useCallback((order) => {
+    setSelectedOrder(order);
+    setShowReviewScreen(true);
+  }, []);
+
+  const handleCloseReview = useCallback(() => {
+    setShowReviewScreen(false);
+    setSelectedOrder(null);
+  }, []);
+
+  const handleReviewSuccess = useCallback(() => {
+    setShowReviewScreen(false);
+    setSelectedOrder(null);
+    Haptics.notificationAsync(
+      Haptics.NotificationFeedbackType.Success
+    ).catch(() => {});
+    showToast(
+      'success',
+      'Review Saved! ⭐',
+      'Thank you for your feedback!'
+    );
+    fetchOrders(1, false);
   }, [fetchOrders]);
 
-  // ── SUBMIT REVIEW ────────────────────────────
-  const handleSubmitReview = useCallback(async ({ rating, comment }) => {
-    setSubmitting(true);
-    try {
-      const params = new URLSearchParams({
-        user_id:  userId,
-        rating:   rating,
-        order_id: selectedOrder?.id,
-      });
-      if (comment) params.append('comment', comment);
+  // ── TRACKING ──────────────────────────────
+  const handleOpenTracking = useCallback((order) => {
+    setTrackingOrderId(order.id);
+    setShowTracking(true);
+  }, []);
 
-      await axios.post(
-        `${API_URL}/reviews?${params.toString()}`
-      );
+  const handleCloseTracking = useCallback(() => {
+    setShowTracking(false);
+    setTrackingOrderId(null);
+    // Refresh list when coming back
+    fetchOrders(1, false);
+  }, [fetchOrders]);
 
-      showToast('success', 'Review Submitted! ⭐',
-        'Thank you for your feedback!');
-      setShowReview(false);
-      setSelectedOrder(null);
-    } catch (error) {
-      if (error.response?.status === 400) {
-        showToast('warning', 'Already Reviewed! ⚠️',
-          'You already reviewed this order.');
-        setShowReview(false);
-      } else {
-        showToast('error', 'Error',
-          'Could not submit review. Try again.');
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  }, [userId, selectedOrder]);
-
-  // ── STATS (memoized) ─────────────────────────
+  // ── STATS ─────────────────────────────────
   const stats = useMemo(() => {
     const totalOrders    = orders.length;
     const deliveredCount = orders.filter(
       o => o.status?.toLowerCase() === 'delivered'
     ).length;
     const pendingCount   = orders.filter(
-      o => o.status?.toLowerCase() === 'pending'
+      o => ['pending', 'confirmed', 'preparing',
+            'ready', 'delivering'].includes(
+        o.status?.toLowerCase()
+      )
     ).length;
-    const totalSpent     = orders
+    const totalSpent = orders
       .filter(o => o.status?.toLowerCase() !== 'cancelled')
-      .reduce((sum, o) =>
-        sum + (o.grand_total || o.total_price || 0), 0
+      .reduce(
+        (sum, o) => sum + (o.grand_total || o.total_price || 0),
+        0
       );
-    return { totalOrders, deliveredCount, pendingCount, totalSpent };
+    return {
+      totalOrders,
+      deliveredCount,
+      pendingCount,
+      totalSpent,
+    };
   }, [orders]);
 
-  // ── FILTERED ORDERS (memoized) ───────────────
-  const filteredOrders = useMemo(() =>
-    selectedFilter === 'All'
-      ? orders
-      : orders.filter(
-          o => o.status?.toLowerCase() ===
-          selectedFilter.toLowerCase()
-        ),
-    [orders, selectedFilter]
-  );
-
-  // ── FILTER COUNTS (memoized) ─────────────────
   const filterCounts = useMemo(() => {
     const counts = { All: orders.length };
     FILTERS.slice(1).forEach(f => {
@@ -741,30 +654,76 @@ export default function OrderHistoryScreen({
     return counts;
   }, [orders]);
 
-  // ── RENDER ITEM ──────────────────────────────
+  // ── RENDER ITEM ───────────────────────────
   const renderOrder = useCallback(({ item }) => (
     <OrderCard
       item={item}
       isExpanded={expandedId === item.id}
-      onToggle={() => setExpandedId(
-        expandedId === item.id ? null : item.id
-      )}
-      onCancel={() => handleCancelOrder(item)}
-      onReview={() => {
-        setSelectedOrder(item);
-        setShowReview(true);
+      onToggle={() => {
+        Haptics.impactAsync(
+          Haptics.ImpactFeedbackStyle.Light
+        ).catch(() => {});
+        setExpandedId(
+          expandedId === item.id ? null : item.id
+        );
       }}
+      onCancel={() => handleCancelOrder(item)}
+      onReview={() => handleOpenReview(item)}
+      onTrack={() => onOpenTracking?.(item.id)}
     />
-  ), [expandedId, handleCancelOrder]);
+  ), [
+    expandedId,
+    handleCancelOrder,
+    handleOpenReview,
+    handleOpenTracking,
+  ]);
 
   const keyExtractor = useCallback(
     (item) => item.id.toString(), []
   );
 
-  // ============================================
-  // EMPTY STATE
-  // ============================================
-  if (!loading && orders.length === 0) {
+  // ── SCREEN ROUTING ────────────────────────
+
+  // ✅ Order Tracking Screen
+  if (showTracking && trackingOrderId) {
+    return (
+      <OrderTrackingScreen
+        orderId={trackingOrderId}
+        userId={userId}
+        onBack={handleCloseTracking}
+        onReview={(orderData) => {
+          setShowTracking(false);
+          setTrackingOrderId(null);
+          setSelectedOrder(orderData);
+          setShowReviewScreen(true);
+        }}
+      />
+    );
+  }
+
+  // Review Screen
+  if (showReviewScreen && selectedOrder) {
+    return (
+      <ReviewScreen
+        userId={userId}
+        orderId={selectedOrder.id}
+        orderType={selectedOrder.order_type || 'food'}
+        restaurantId={selectedOrder.restaurant_id}
+        productId={selectedOrder.product_id}
+        restaurantName={
+          selectedOrder.restaurant_name ||
+          selectedOrder.seller_name
+        }
+        productName={selectedOrder.product_name}
+        onBack={handleCloseReview}
+        onSuccess={handleReviewSuccess}
+      />
+    );
+  }
+
+  // Empty State
+  if (!loading && orders.length === 0 &&
+      selectedFilter === 'All') {
     return (
       <View style={styles.container}>
         <StatusBar
@@ -784,7 +743,9 @@ export default function OrderHistoryScreen({
           <View style={styles.emptyCircle}>
             <Text style={styles.emptyEmoji}>📦</Text>
           </View>
-          <Text style={styles.emptyTitle}>No Orders Yet</Text>
+          <Text style={styles.emptyTitle}>
+            No Orders Yet
+          </Text>
           <Text style={styles.emptySub}>
             Your order history will{'\n'}appear here
           </Text>
@@ -801,26 +762,12 @@ export default function OrderHistoryScreen({
     );
   }
 
-  // ============================================
-  // MAIN RENDER
-  // ============================================
+  // ── MAIN RENDER ───────────────────────────
   return (
     <View style={styles.container}>
       <StatusBar
         backgroundColor={colors.headerBg}
         barStyle="dark-content"
-      />
-
-      {/* REVIEW MODAL */}
-      <ReviewModal
-        visible={showReview}
-        order={selectedOrder}
-        onClose={() => {
-          setShowReview(false);
-          setSelectedOrder(null);
-        }}
-        onSubmit={handleSubmitReview}
-        submitting={submitting}
       />
 
       {/* HEADER */}
@@ -832,11 +779,13 @@ export default function OrderHistoryScreen({
           <Text style={styles.headerBackText}>←</Text>
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>My Orders</Text>
+          <Text style={styles.headerTitle}>
+            My Orders
+          </Text>
           {stats.pendingCount > 0 && (
             <View style={styles.headerBadge}>
               <Text style={styles.headerBadgeText}>
-                {stats.pendingCount} pending
+                {stats.pendingCount} active
               </Text>
             </View>
           )}
@@ -845,7 +794,7 @@ export default function OrderHistoryScreen({
           style={styles.refreshBtn}
           onPress={() => {
             setLoading(true);
-            fetchOrders();
+            fetchOrders(1, false);
           }}
           activeOpacity={0.8}>
           <Text style={styles.refreshBtnText}>↻</Text>
@@ -898,7 +847,12 @@ export default function OrderHistoryScreen({
                   styles.filterChip,
                   isActive && styles.filterChipActive,
                 ]}
-                onPress={() => setSelectedFilter(item)}
+                onPress={() => {
+                  Haptics.impactAsync(
+                    Haptics.ImpactFeedbackStyle.Light
+                  ).catch(() => {});
+                  setSelectedFilter(item);
+                }}
                 activeOpacity={0.8}>
                 <Text style={[
                   styles.filterChipText,
@@ -906,7 +860,6 @@ export default function OrderHistoryScreen({
                 ]}>
                   {item}
                 </Text>
-                {/* Count badge on each filter */}
                 {count > 0 && item !== 'All' && (
                   <View style={[
                     styles.filterBadge,
@@ -914,7 +867,8 @@ export default function OrderHistoryScreen({
                   ]}>
                     <Text style={[
                       styles.filterBadgeText,
-                      isActive && styles.filterBadgeTextActive,
+                      isActive &&
+                      styles.filterBadgeTextActive,
                     ]}>
                       {count}
                     </Text>
@@ -939,11 +893,13 @@ export default function OrderHistoryScreen({
         </View>
       ) : (
         <FlatList
-          data={filteredOrders}
+          data={orders}
           keyExtractor={keyExtractor}
           renderItem={renderOrder}
           contentContainerStyle={styles.orderList}
           showsVerticalScrollIndicator={false}
+          onEndReached={onLoadMore}
+          onEndReachedThreshold={0.3}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -952,9 +908,21 @@ export default function OrderHistoryScreen({
               tintColor={colors.primary}
             />
           }
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.loadMoreWrap}>
+                <ActivityIndicator
+                  size="small"
+                  color={colors.primary}
+                />
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.emptyFilterWrap}>
-              <Text style={styles.emptyFilterEmoji}>🔍</Text>
+              <Text style={styles.emptyFilterEmoji}>
+                🔍
+              </Text>
               <Text style={styles.emptyFilterTitle}>
                 No {selectedFilter} Orders
               </Text>
@@ -974,656 +942,531 @@ export default function OrderHistoryScreen({
 // STYLES
 // ============================================
 const styles = StyleSheet.create({
-
   container: {
-    flex: 1,
+    flex:            1,
     backgroundColor: colors.background,
   },
-
-  // ── HEADER ──────────────────────────────────
   header: {
-    backgroundColor: colors.headerBg,
-    paddingTop: 52,
-    paddingBottom: 16,
+    backgroundColor:   colors.headerBg,
+    paddingTop:        52,
+    paddingBottom:     16,
     paddingHorizontal: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
     borderBottomWidth: 1,
     borderBottomColor: colors.headerBorder,
     ...shadow,
   },
   headerBackBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width:           38,
+    height:          38,
+    borderRadius:    12,
     backgroundColor: colors.inputBackground,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
+    alignItems:      'center',
+    justifyContent:  'center',
+    borderWidth:     1,
+    borderColor:     colors.border,
   },
   headerBackText: {
-    color: colors.primary,
-    fontSize: 18,
+    color:      colors.primary,
+    fontSize:   18,
     fontWeight: '700',
   },
   headerCenter: {
-    flex: 1,
+    flex:       1,
     alignItems: 'center',
-    gap: 4,
+    gap:        4,
   },
   headerTitle: {
-    color: colors.textDark,
-    fontSize: 18,
+    color:      colors.textDark,
+    fontSize:   18,
     fontWeight: '900',
   },
   headerBadge: {
-    backgroundColor: colors.warningPale,
+    backgroundColor:   colors.successPale,
     paddingHorizontal: 10,
-    paddingVertical: 2,
-    borderRadius: borderRadius.round,
-    borderWidth: 1,
-    borderColor: colors.warning + '30',
+    paddingVertical:   2,
+    borderRadius:      borderRadius.round,
+    borderWidth:       1,
+    borderColor:       colors.success + '30',
   },
   headerBadgeText: {
-    color: colors.warning,
-    fontSize: 9,
-    fontWeight: '800',
+    color:         colors.success,
+    fontSize:      9,
+    fontWeight:    '800',
     letterSpacing: 0.5,
   },
   refreshBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width:           38,
+    height:          38,
+    borderRadius:    12,
     backgroundColor: colors.primaryPale,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.borderGold,
+    alignItems:      'center',
+    justifyContent:  'center',
+    borderWidth:     1,
+    borderColor:     colors.borderGold,
   },
   refreshBtnText: {
-    color: colors.primary,
-    fontSize: 20,
+    color:      colors.primary,
+    fontSize:   20,
     fontWeight: '700',
   },
-
-  // ── STATS BANNER ────────────────────────────
   statsBanner: {
     backgroundColor: colors.dark,
     marginHorizontal: 20,
-    marginTop: 16,
-    marginBottom: 8,
-    borderRadius: borderRadius.xlarge,
-    padding: 18,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.borderGold,
+    marginTop:        16,
+    marginBottom:     8,
+    borderRadius:     borderRadius.xlarge,
+    padding:          18,
+    flexDirection:    'row',
+    justifyContent:   'space-between',
+    alignItems:       'center',
+    borderWidth:      1,
+    borderColor:      colors.borderGold,
     ...shadowMd,
   },
   statItem: {
     alignItems: 'center',
-    flex: 1,
-    gap: 2,
+    flex:       1,
+    gap:        2,
   },
   statEmoji: { fontSize: 18, marginBottom: 2 },
   statValue: {
-    color: colors.primary,
-    fontSize: 20,
+    color:      colors.primary,
+    fontSize:   20,
     fontWeight: '900',
   },
   statLabel: {
-    color: 'rgba(255,255,255,0.45)',
-    fontSize: 9,
-    fontWeight: '700',
+    color:         'rgba(255,255,255,0.45)',
+    fontSize:      9,
+    fontWeight:    '700',
     letterSpacing: 0.5,
   },
   statDivider: {
-    width: 1,
-    height: 40,
+    width:           1,
+    height:          40,
     backgroundColor: 'rgba(255,255,255,0.10)',
   },
-
-  // ── FILTER ──────────────────────────────────
   filterWrap: {
-    backgroundColor: colors.cardBackground,
+    backgroundColor:   colors.cardBackground,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
   filterList: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 8,
+    paddingVertical:   12,
+    gap:               8,
   },
   filterChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             5,
     paddingHorizontal: 14,
     paddingVertical: 7,
-    borderRadius: borderRadius.round,
+    borderRadius:    borderRadius.round,
     backgroundColor: colors.inputBackground,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth:     1,
+    borderColor:     colors.border,
   },
   filterChipActive: {
     backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    borderColor:     colors.primary,
   },
   filterChipText: {
-    fontSize: 11,
-    color: colors.textMedium,
+    fontSize:   11,
+    color:      colors.textMedium,
     fontWeight: '700',
   },
   filterChipTextActive: {
-    color: colors.textWhite,
+    color:      colors.textWhite,
     fontWeight: '900',
   },
   filterBadge: {
     backgroundColor: colors.border,
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius:    8,
+    minWidth:        16,
+    height:          16,
+    alignItems:      'center',
+    justifyContent:  'center',
     paddingHorizontal: 4,
   },
   filterBadgeActive: {
     backgroundColor: 'rgba(255,255,255,0.3)',
   },
   filterBadgeText: {
-    color: colors.textMuted,
-    fontSize: 8,
+    color:      colors.textMuted,
+    fontSize:   8,
     fontWeight: '900',
   },
   filterBadgeTextActive: {
     color: colors.textWhite,
   },
-
-  // ── LOADING ─────────────────────────────────
   loadingWrap: {
-    flex: 1,
-    alignItems: 'center',
+    flex:           1,
+    alignItems:     'center',
     justifyContent: 'center',
-    gap: 14,
+    gap:            14,
   },
   loadingText: {
-    color: colors.textLight,
-    fontSize: 13,
+    color:      colors.textLight,
+    fontSize:   13,
     fontWeight: '600',
   },
-
-  // ── ORDER LIST ──────────────────────────────
+  loadMoreWrap: {
+    paddingVertical: 20,
+    alignItems:      'center',
+  },
   orderList: {
-    padding: 16,
+    padding:       16,
     paddingBottom: 100,
   },
-
-  // ── ORDER CARD ──────────────────────────────
   orderCard: {
     backgroundColor: colors.cardBackground,
-    borderRadius: borderRadius.xxlarge,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
+    borderRadius:    borderRadius.xxlarge,
+    marginBottom:    14,
+    borderWidth:     1,
+    borderColor:     colors.border,
+    overflow:        'hidden',
     ...shadowMd,
   },
-  orderCardTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    padding: 16,
-    gap: 12,
+  activeBar: {
+    backgroundColor: colors.successPale,
+    paddingHorizontal: 16,
+    paddingVertical:   6,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.success + '20',
   },
-  orderCardTopLeft: { flex: 1, gap: 4 },
+  activeBarText: {
+    color:         colors.success,
+    fontSize:      9,
+    fontWeight:    '900',
+    letterSpacing: 1,
+  },
+  orderCardTop: {
+    flexDirection:  'row',
+    justifyContent: 'space-between',
+    alignItems:     'flex-start',
+    padding:        16,
+    gap:            12,
+  },
+  orderCardTopLeft:  { flex: 1, gap: 4 },
   orderCardTopRight: {
     alignItems: 'flex-end',
-    gap: 8,
+    gap:        8,
   },
   orderTypePill: {
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: borderRadius.round,
-    alignSelf: 'flex-start',
+    paddingVertical:   4,
+    borderRadius:      borderRadius.round,
+    alignSelf:         'flex-start',
   },
   orderTypePillText: {
-    fontSize: 10,
+    fontSize:   10,
     fontWeight: '800',
   },
   orderId: {
-    color: colors.textDark,
-    fontSize: 20,
-    fontWeight: '900',
+    color:         colors.textDark,
+    fontSize:      20,
+    fontWeight:    '900',
     letterSpacing: -0.5,
   },
   orderDate: {
-    color: colors.textMuted,
-    fontSize: 10,
+    color:      colors.textMuted,
+    fontSize:   10,
     fontWeight: '500',
   },
   statusBadge: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems:    'center',
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: borderRadius.round,
-    gap: 4,
-    borderWidth: 1,
+    paddingVertical:   6,
+    borderRadius:  borderRadius.round,
+    gap:           4,
+    borderWidth:   1,
   },
   statusIcon: { fontSize: 12 },
   statusText: {
-    fontSize: 10,
-    fontWeight: '900',
+    fontSize:      10,
+    fontWeight:    '900',
     letterSpacing: 0.5,
   },
   totalExpandRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    alignItems:    'center',
+    gap:           8,
   },
   cardTotal: {
-    color: colors.primary,
-    fontSize: 18,
+    color:      colors.primary,
+    fontSize:   18,
     fontWeight: '900',
   },
   expandIcon: {
-    color: colors.textMuted,
-    fontSize: 10,
+    color:      colors.textMuted,
+    fontSize:   10,
     fontWeight: '700',
   },
-
-  // ── CARD DIVIDER ────────────────────────────
   cardDivider: {
-    height: 1,
+    height:          1,
     backgroundColor: colors.border,
     marginHorizontal: 16,
   },
-
-  // ── ORDER DETAILS ───────────────────────────
   orderDetails: {
     padding: 16,
-    gap: 14,
+    gap:     14,
   },
   detailRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
+    alignItems:    'flex-start',
+    gap:           12,
   },
   detailIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    width:           36,
+    height:          36,
+    borderRadius:    12,
     backgroundColor: colors.inputBackground,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
+    alignItems:      'center',
+    justifyContent:  'center',
+    borderWidth:     1,
+    borderColor:     colors.border,
   },
   detailIcon:  { fontSize: 16 },
   detailInfo:  { flex: 1, paddingTop: 2 },
   detailLabel: {
-    color: colors.textMuted,
-    fontSize: 9,
-    fontWeight: '700',
+    color:         colors.textMuted,
+    fontSize:      9,
+    fontWeight:    '700',
     letterSpacing: 1.5,
-    marginBottom: 3,
+    marginBottom:  3,
   },
   detailValue: {
-    color: colors.textDark,
-    fontSize: 13,
+    color:      colors.textDark,
+    fontSize:   13,
     fontWeight: '600',
     lineHeight: 18,
   },
-
-  // ── TOTAL ROW ───────────────────────────────
   totalRow: {
     backgroundColor: colors.primaryPale,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection:   'row',
+    justifyContent:  'space-between',
+    alignItems:      'center',
     paddingHorizontal: 16,
     paddingVertical: 14,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderGold,
+    borderTopWidth:  1,
+    borderTopColor:  colors.borderGold,
   },
   totalLabel: {
-    color: colors.textMedium,
-    fontSize: 11,
-    fontWeight: '700',
+    color:         colors.textMedium,
+    fontSize:      11,
+    fontWeight:    '700',
     letterSpacing: 1.5,
   },
   totalValue: {
-    color: colors.primary,
-    fontSize: 22,
+    color:      colors.primary,
+    fontSize:   22,
     fontWeight: '900',
   },
-
-  // ── TRACKER ─────────────────────────────────
   trackerWrap: {
-    backgroundColor: colors.background,
+    backgroundColor:  colors.background,
     paddingHorizontal: 12,
-    paddingTop: 16,
-    paddingBottom: 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    paddingTop:       16,
+    paddingBottom:    8,
+    borderTopWidth:   1,
+    borderTopColor:   colors.border,
   },
   trackerTitle: {
-    color: colors.textMuted,
-    fontSize: 9,
-    fontWeight: '800',
+    color:         colors.textMuted,
+    fontSize:      9,
+    fontWeight:    '800',
     letterSpacing: 2,
-    marginBottom: 16,
-    paddingLeft: 4,
+    marginBottom:  16,
+    paddingLeft:   4,
   },
   tracker: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    flexDirection:  'row',
+    alignItems:     'flex-start',
     justifyContent: 'space-between',
-    paddingBottom: 8,
+    paddingBottom:  8,
   },
   trackerStep: {
-    flex: 1,
+    flex:       1,
     alignItems: 'center',
-    position: 'relative',
+    position:   'relative',
   },
   trackerDot: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width:           38,
+    height:          38,
+    borderRadius:    19,
     backgroundColor: colors.inputBackground,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: colors.border,
-    marginBottom: 8,
-    zIndex: 2,
+    alignItems:      'center',
+    justifyContent:  'center',
+    borderWidth:     2,
+    borderColor:     colors.border,
+    marginBottom:    8,
+    zIndex:          2,
   },
   trackerDotDone: {
     backgroundColor: colors.primaryPale,
-    borderColor: colors.primary,
+    borderColor:     colors.primary,
   },
   trackerDotActive: {
     backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    borderColor:     colors.primary,
     ...shadowGold,
   },
   trackerDotIcon: { fontSize: 14 },
   trackerLabel: {
-    fontSize: 8,
-    color: colors.textMuted,
+    fontSize:   8,
+    color:      colors.textMuted,
     fontWeight: '600',
-    textAlign: 'center',
+    textAlign:  'center',
     lineHeight: 12,
   },
   trackerLabelDone: {
-    color: colors.primary,
+    color:      colors.primary,
     fontWeight: '800',
   },
   trackerLine: {
-    position: 'absolute',
-    top: 18,
-    left: '50%',
-    width: '100%',
-    height: 2,
+    position:        'absolute',
+    top:             18,
+    left:            '50%',
+    width:           '100%',
+    height:          2,
     backgroundColor: colors.border,
-    zIndex: 1,
+    zIndex:          1,
   },
   trackerLineDone: {
     backgroundColor: colors.primary,
-    opacity: 0.6,
+    opacity:         0.6,
   },
-
-  // ── CANCELLED BANNER ────────────────────────
   cancelledBanner: {
     backgroundColor: colors.dangerPale,
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    gap: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.danger + '20',
+    flexDirection:   'row',
+    alignItems:      'center',
+    padding:         14,
+    gap:             12,
+    borderTopWidth:  1,
+    borderTopColor:  colors.danger + '20',
   },
   cancelledIcon:  { fontSize: 20 },
   cancelledTitle: {
-    color: colors.danger,
-    fontSize: 13,
-    fontWeight: '800',
+    color:        colors.danger,
+    fontSize:     13,
+    fontWeight:   '800',
     marginBottom: 2,
   },
   cancelledSub: {
-    color: colors.danger,
+    color:    colors.danger,
     fontSize: 11,
-    opacity: 0.7,
+    opacity:  0.7,
   },
-
-  // ── ACTION BUTTONS ──────────────────────────
   actionBtns: {
     borderTopWidth: 1,
     borderTopColor: colors.border,
   },
+  trackBtn: {
+    padding:         15,
+    alignItems:      'center',
+    backgroundColor: colors.riderBg,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.riderBorder,
+  },
+  trackBtnText: {
+    color:      colors.riderColor,
+    fontWeight: '900',
+    fontSize:   13,
+  },
   cancelOrderBtn: {
-    padding: 15,
-    alignItems: 'center',
+    padding:         15,
+    alignItems:      'center',
     backgroundColor: colors.dangerPale,
   },
   cancelOrderBtnText: {
-    color: colors.danger,
+    color:      colors.danger,
     fontWeight: '800',
-    fontSize: 13,
+    fontSize:   13,
   },
   reviewBtn: {
     backgroundColor: colors.primaryPale,
-    padding: 15,
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: colors.borderGold,
+    padding:         15,
+    alignItems:      'center',
+    borderTopWidth:  1,
+    borderTopColor:  colors.borderGold,
   },
   reviewBtnText: {
-    color: colors.primary,
-    fontWeight: '900',
-    fontSize: 13,
+    color:         colors.primary,
+    fontWeight:    '900',
+    fontSize:      13,
     letterSpacing: 0.5,
   },
-
-  // ── EMPTY STATES ────────────────────────────
+  reviewedBadge: {
+    padding:         12,
+    alignItems:      'center',
+    backgroundColor: colors.successPale,
+  },
+  reviewedText: {
+    color:      colors.success,
+    fontWeight: '700',
+    fontSize:   12,
+  },
   emptyWrap: {
-    flex: 1,
+    flex:       1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 40,
+    padding:    40,
   },
   emptyCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width:           120,
+    height:          120,
+    borderRadius:    60,
     backgroundColor: colors.primaryPale,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 24,
-    borderWidth: 2,
-    borderColor: colors.borderGold,
+    alignItems:      'center',
+    justifyContent:  'center',
+    marginBottom:    24,
+    borderWidth:     2,
+    borderColor:     colors.borderGold,
     ...shadowGold,
   },
   emptyEmoji:  { fontSize: 55 },
   emptyTitle: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: colors.textDark,
+    fontSize:     24,
+    fontWeight:   '900',
+    color:        colors.textDark,
     marginBottom: 10,
   },
   emptySub: {
-    fontSize: 14,
-    color: colors.textLight,
-    textAlign: 'center',
-    lineHeight: 22,
+    fontSize:     14,
+    color:        colors.textLight,
+    textAlign:    'center',
+    lineHeight:   22,
     marginBottom: 32,
   },
   emptyBtn: {
-    backgroundColor: colors.primary,
+    backgroundColor:   colors.primary,
     paddingHorizontal: 28,
-    paddingVertical: 15,
-    borderRadius: borderRadius.large,
+    paddingVertical:   15,
+    borderRadius:      borderRadius.large,
     ...shadowGold,
   },
   emptyBtnText: {
-    color: colors.textWhite,
+    color:      colors.textWhite,
     fontWeight: '900',
-    fontSize: 14,
+    fontSize:   14,
   },
   emptyFilterWrap: {
-    alignItems: 'center',
+    alignItems:     'center',
     paddingVertical: 60,
-    gap: 10,
+    gap:            10,
   },
   emptyFilterEmoji: { fontSize: 48 },
   emptyFilterTitle: {
-    color: colors.textDark,
-    fontSize: 18,
+    color:      colors.textDark,
+    fontSize:   18,
     fontWeight: '900',
   },
   emptyFilterSub: {
-    color: colors.textLight,
-    fontSize: 12,
+    color:      colors.textLight,
+    fontSize:   12,
     fontWeight: '500',
-  },
-
-  // ── REVIEW MODAL ────────────────────────────
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    padding: 24,
-    paddingBottom: 10,
-    maxHeight: '88%',
-    borderTopWidth: 1,
-    borderColor: colors.borderGold,
-  },
-  modalHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: colors.textDark,
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  modalSub: {
-    fontSize: 13,
-    color: colors.textLight,
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  starsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 6,
-    marginBottom: 10,
-  },
-  starBtn: { padding: 6 },
-  starIcon: {
-    fontSize: 40,
-    color: colors.border,
-  },
-  starActive: { color: colors.primary },
-  ratingLabel: {
-    color: colors.primary,
-    fontSize: 15,
-    fontWeight: '800',
-    textAlign: 'center',
-    marginBottom: 20,
-    minHeight: 22,
-  },
-  tagsTitle: {
-    color: colors.textMuted,
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 2,
-    marginBottom: 10,
-  },
-  tagsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
-  },
-  tag: {
-    backgroundColor: colors.inputBackground,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: borderRadius.round,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  tagActive: {
-    backgroundColor: colors.primaryPale,
-    borderColor: colors.primary,
-  },
-  tagText: {
-    color: colors.textMedium,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  tagTextActive: {
-    color: colors.primary,
-    fontWeight: '800',
-  },
-  commentInput: {
-    backgroundColor: colors.inputBackground,
-    borderRadius: borderRadius.large,
-    padding: 14,
-    fontSize: 13,
-    color: colors.textDark,
-    borderWidth: 1,
-    borderColor: colors.border,
-    minHeight: 85,
-    textAlignVertical: 'top',
-    marginBottom: 18,
-  },
-  modalBtns: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 8,
-  },
-  skipBtn: {
-    flex: 1,
-    padding: 15,
-    borderRadius: borderRadius.large,
-    alignItems: 'center',
-    backgroundColor: colors.inputBackground,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  skipBtnText: {
-    color: colors.textMedium,
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  submitBtn: {
-    flex: 2,
-    padding: 15,
-    borderRadius: borderRadius.large,
-    alignItems: 'center',
-    backgroundColor: colors.primary,
-    ...shadowGold,
-  },
-  submitBtnDisabled: { opacity: 0.45 },
-  submitBtnText: {
-    color: colors.textWhite,
-    fontWeight: '900',
-    fontSize: 13,
   },
 });

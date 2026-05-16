@@ -1,5 +1,5 @@
 // ============================================
-// ZAVARA TOAST MANAGER - COMPLETE FIXED v2.1
+// ZAVARA TOASTMANAGER.JS - v3.0
 // ============================================
 import {
   useState,
@@ -7,18 +7,21 @@ import {
   useCallback,
   useContext,
   createContext,
+  useEffect,
 } from 'react';
 import Toast from './Toast';
 
-// 🔧 FIX: Use React Context instead of module variable
-// This prevents hot-reload issues
+// ============================================
+// CONSTANTS
+// ============================================
+const MAX_QUEUE = 5; // Never stack more than 5 toasts
+
+// ============================================
+// CONTEXT
+// ============================================
 const ToastContext = createContext(null);
 
-// Internal queue to prevent toast override
-let toastQueue = [];
-let isShowing  = false;
-
-// 🔧 FIX: Module-level ref that persists properly
+// Module-level ref - persists across renders
 let _showToast = null;
 
 // ============================================
@@ -26,43 +29,73 @@ let _showToast = null;
 // ============================================
 export function ToastProvider({ children }) {
   const [toastConfig, setToastConfig] = useState({
-    visible: false,
-    type: 'success',
-    title: '',
-    message: '',
+    visible:  false,
+    type:     'info',
+    title:    '',
+    message:  '',
     duration: 3000,
   });
 
-  // 🔧 FIX: Proper function reference
+  const queue     = useRef([]);
+  const isShowing = useRef(false);
+
+  // ── PROCESS QUEUE ───────────────────────────
+  const processQueue = useCallback(() => {
+    if (queue.current.length === 0) {
+      isShowing.current = false;
+      return;
+    }
+
+    const next = queue.current.shift();
+    isShowing.current = true;
+
+    setToastConfig({
+      visible:  true,
+      type:     next.type     || 'info',
+      title:    next.title    || '',
+      message:  next.message  || '',
+      duration: next.duration || 3000,
+    });
+  }, []);
+
+  // ── SHOW TOAST ──────────────────────────────
   const showToastInternal = useCallback((
     type,
     title,
     message,
     duration = 3000
   ) => {
-    // Add to queue
-    toastQueue.push({ type, title, message, duration });
-
-    // Process queue if not already showing
-    if (!isShowing) {
-      processQueue(setToastConfig);
+    // Enforce max queue limit
+    if (queue.current.length >= MAX_QUEUE) {
+      queue.current = queue.current.slice(-2);
     }
-  }, []);
 
-  // Register globally
-  _showToast = showToastInternal;
+    queue.current.push({ type, title, message, duration });
 
+    if (!isShowing.current) {
+      processQueue();
+    }
+  }, [processQueue]);
+
+  // ── HANDLE HIDE ─────────────────────────────
   const handleHide = useCallback(() => {
     setToastConfig(prev => ({ ...prev, visible: false }));
-    isShowing = false;
+    isShowing.current = false;
 
-    // 🆕 Process next in queue after hide animation
+    // Small delay before next toast
     setTimeout(() => {
-      if (toastQueue.length > 0) {
-        processQueue(setToastConfig);
-      }
-    }, 400);
-  }, []);
+      processQueue();
+    }, 350);
+  }, [processQueue]);
+
+  // ── REGISTER GLOBAL ─────────────────────────
+  // useEffect ensures cleanup on unmount
+  useEffect(() => {
+    _showToast = showToastInternal;
+    return () => {
+      _showToast = null;
+    };
+  }, [showToastInternal]);
 
   return (
     <ToastContext.Provider value={showToastInternal}>
@@ -80,28 +113,10 @@ export function ToastProvider({ children }) {
 }
 
 // ============================================
-// QUEUE PROCESSOR
-// ============================================
-function processQueue(setToastConfig) {
-  if (toastQueue.length === 0) return;
-
-  const next = toastQueue.shift();
-  isShowing = true;
-
-  setToastConfig({
-    visible: true,
-    type: next.type,
-    title: next.title,
-    message: next.message,
-    duration: next.duration || 3000,
-  });
-}
-
-// ============================================
-// PUBLIC API - USE ANYWHERE IN YOUR APP
+// PUBLIC API
 // ============================================
 
-// 🔧 FIX: Safe global function
+// Main function - use anywhere
 export const showToast = (
   type,
   title,
@@ -111,33 +126,30 @@ export const showToast = (
   if (_showToast) {
     _showToast(type, title, message, duration);
   } else {
-    // Fallback: queue it for when provider is ready
-    toastQueue.push({ type, title, message, duration });
-    console.warn(
-      'showToast called before ToastProvider mounted'
-    );
+    // Provider not mounted yet - try again
+    setTimeout(() => {
+      if (_showToast) {
+        _showToast(type, title, message, duration);
+      }
+    }, 500);
   }
 };
 
-// 🆕 Convenience methods
-export const showSuccess = (title, message, duration) =>
-  showToast('success', title, message, duration);
+// Convenience methods (like Shopee's toast API)
+export const showSuccess = (title, msg, dur) =>
+  showToast('success', title, msg, dur);
 
-export const showError = (title, message, duration) =>
-  showToast('error', title, message, duration);
+export const showError = (title, msg, dur) =>
+  showToast('error', title, msg, dur);
 
-export const showWarning = (title, message, duration) =>
-  showToast('warning', title, message, duration);
+export const showWarning = (title, msg, dur) =>
+  showToast('warning', title, msg, dur);
 
-export const showInfo = (title, message, duration) =>
-  showToast('info', title, message, duration);
+export const showInfo = (title, msg, dur) =>
+  showToast('info', title, msg, dur);
 
-// 🆕 Hook for components (optional)
+// Hook for components
 export const useToast = () => {
   const ctx = useContext(ToastContext);
-  if (!ctx) {
-    // Return fallback if used outside provider
-    return showToast;
-  }
-  return ctx;
+  return ctx || showToast;
 };
