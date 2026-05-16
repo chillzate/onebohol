@@ -18,12 +18,9 @@ import {
   colors,
   shadow,
   shadowMd,
-  shadowLg,
-  shadowDark,
   shadowStrong,
   shadowGold,
   borderRadius,
-  fonts,
 } from '../theme';
 import CartScreen from './CartScreen';
 
@@ -43,7 +40,9 @@ export default function FoodScreen({ userId, onBack }) {
   const [searchText, setSearchText] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
 
-  // Animations
+  // ✅ FIXED: Added missing state
+  const [restaurantRatings, setRestaurantRatings] = useState({});
+
   const headerAnim = useRef(new Animated.Value(0)).current;
   const cartBounce = useRef(new Animated.Value(1)).current;
 
@@ -61,7 +60,6 @@ export default function FoodScreen({ userId, onBack }) {
     }).start();
   }, []);
 
-  // Bounce cart when item added
   useEffect(() => {
     if (cart.length > 0) {
       Animated.sequence([
@@ -86,22 +84,40 @@ export default function FoodScreen({ userId, onBack }) {
         `${API_URL}/restaurants`
       );
       setRestaurants(response.data);
-    } catch (error) {
+    } catch {
       setRestaurants([]);
     }
     setLoading(false);
+  };
+
+  // ✅ FIXED: fetchRatings now properly defined
+  const fetchRatings = async (restaurantId) => {
+    try {
+      const res = await axios.get(
+        `${API_URL}/reviews/restaurant/${restaurantId}`
+      );
+      setRestaurantRatings(prev => ({
+        ...prev,
+        [restaurantId]: {
+          avg: res.data.average_rating,
+          total: res.data.total_reviews,
+        }
+      }));
+    } catch {}
   };
 
   const fetchMenu = async (restaurant) => {
     setSelectedRestaurant(restaurant);
     setSelectedMenuCat('All');
     setMenuLoading(true);
+    // Also fetch ratings when opening restaurant
+    fetchRatings(restaurant.id);
     try {
       const response = await axios.get(
         `${API_URL}/restaurants/${restaurant.id}/menu`
       );
       setMenuItems(response.data);
-    } catch (error) {
+    } catch {
       setMenuItems([]);
     }
     setMenuLoading(false);
@@ -147,15 +163,9 @@ export default function FoodScreen({ userId, onBack }) {
     ...new Set(menuItems.map(i => i.category)),
   ];
 
-  // Random rating for display
   const getRating = (id) => {
     const ratings = [4.2, 4.5, 4.7, 4.8, 4.3, 4.6, 4.9];
     return ratings[id % ratings.length];
-  };
-
-  const getReviews = (id) => {
-    const reviews = [128, 256, 89, 342, 167, 445, 203];
-    return reviews[id % reviews.length];
   };
 
   // ============================================
@@ -174,38 +184,7 @@ export default function FoodScreen({ userId, onBack }) {
         }}
       />
     );
-  } 
-
-  // In FoodScreen.js
-// Add this function:
-const [restaurantRatings, setRestaurantRatings] = 
-  useState({});
-
-const fetchRatings = async (restaurantId) => {
-  try {
-    const res = await axios.get(
-      `${API_URL}/reviews/restaurant/${restaurantId}`
-    );
-    setRestaurantRatings(prev => ({
-      ...prev,
-      [restaurantId]: {
-        avg: res.data.average_rating,
-        total: res.data.total_reviews,
-      }
-    }));
-  } catch {}
-};
-
-// Then in restaurant card show:
-<View style={styles.ratingWrap}>
-  <Text style={styles.ratingStar}>⭐</Text>
-  <Text style={styles.ratingText}>
-    {restaurantRatings[item.id]?.avg || '4.5'}
-  </Text>
-  <Text style={styles.ratingCount}>
-    ({restaurantRatings[item.id]?.total || 0})
-  </Text>
-</View>
+  }
 
   // ============================================
   // MENU SCREEN
@@ -219,7 +198,7 @@ const fetchRatings = async (restaurantId) => {
           translucent
         />
 
-        {/* RESTAURANT HERO IMAGE */}
+        {/* RESTAURANT HERO */}
         <View style={styles.heroWrap}>
           {selectedRestaurant.image_url ? (
             <Image
@@ -234,10 +213,8 @@ const fetchRatings = async (restaurantId) => {
             </View>
           )}
 
-          {/* GRADIENT OVERLAY */}
           <View style={styles.heroOverlay} />
 
-          {/* HERO CONTENT */}
           <View style={styles.heroContent}>
             <View style={styles.heroBadgeRow}>
               <View style={styles.heroBadge}>
@@ -262,7 +239,8 @@ const fetchRatings = async (restaurantId) => {
               <View style={styles.heroMetaItem}>
                 <Text style={styles.heroMetaIcon}>⭐</Text>
                 <Text style={styles.heroMetaText}>
-                  {getRating(selectedRestaurant.id)}
+                  {restaurantRatings[selectedRestaurant.id]?.avg
+                    || getRating(selectedRestaurant.id)}
                 </Text>
               </View>
               <View style={styles.heroMetaDot} />
@@ -293,8 +271,10 @@ const fetchRatings = async (restaurantId) => {
           <TouchableOpacity
             style={styles.heroCartBtn}
             onPress={() => setShowCart(true)}>
-            <Animated.Text style={[styles.heroCartIcon,
-              { transform: [{ scale: cartBounce }] }]}>
+            <Animated.Text style={[
+              styles.heroCartIcon,
+              { transform: [{ scale: cartBounce }] },
+            ]}>
               🛒
             </Animated.Text>
             {cartCount > 0 && (
@@ -375,7 +355,6 @@ const fetchRatings = async (restaurantId) => {
               );
               return (
                 <View style={styles.menuCard}>
-                  {/* LEFT INFO */}
                   <View style={styles.menuCardLeft}>
                     {inCart && (
                       <View style={styles.inCartBadge}>
@@ -401,7 +380,6 @@ const fetchRatings = async (restaurantId) => {
                     </Text>
                   </View>
 
-                  {/* RIGHT */}
                   <View style={styles.menuCardRight}>
                     {item.image_url ? (
                       <Image
@@ -409,8 +387,12 @@ const fetchRatings = async (restaurantId) => {
                         style={styles.menuItemImg}
                       />
                     ) : (
-                      <View style={styles.menuItemImgPlaceholder}>
-                        <Text style={styles.menuItemImgEmoji}>
+                      <View style={
+                        styles.menuItemImgPlaceholder
+                      }>
+                        <Text style={
+                          styles.menuItemImgEmoji
+                        }>
                           🍽️
                         </Text>
                       </View>
@@ -422,7 +404,9 @@ const fetchRatings = async (restaurantId) => {
                       ]}
                       onPress={() => addToCart(item)}>
                       <Text style={styles.addBtnText}>
-                        {inCart ? `+${inCart.quantity}` : '+'}
+                        {inCart
+                          ? `+${inCart.quantity}`
+                          : '+'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -454,7 +438,9 @@ const fetchRatings = async (restaurantId) => {
               <Text style={styles.floatingCartTotal}>
                 ₱{cartTotal.toFixed(2)}
               </Text>
-              <Text style={styles.floatingCartArrow}>→</Text>
+              <Text style={styles.floatingCartArrow}>
+                →
+              </Text>
             </View>
           </TouchableOpacity>
         )}
@@ -489,8 +475,8 @@ const fetchRatings = async (restaurantId) => {
             style={styles.headerCartBtn}
             onPress={() => setShowCart(true)}>
             <Animated.Text style={[
-              { transform: [{ scale: cartBounce }] },
               styles.headerCartIcon,
+              { transform: [{ scale: cartBounce }] },
             ]}>
               🛒
             </Animated.Text>
@@ -503,7 +489,6 @@ const fetchRatings = async (restaurantId) => {
             )}
           </TouchableOpacity>
         </View>
-
         <Text style={styles.headerTitle}>🍴 Cuisine</Text>
         <Text style={styles.headerSub}>
           {restaurants.length} restaurants near you
@@ -512,8 +497,10 @@ const fetchRatings = async (restaurantId) => {
 
       {/* SEARCH BAR */}
       <View style={styles.searchWrap}>
-        <View style={[styles.searchBar,
-          searchFocused && styles.searchBarFocused]}>
+        <View style={[
+          styles.searchBar,
+          searchFocused && styles.searchBarFocused,
+        ]}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
             style={styles.searchInput}
@@ -627,14 +614,16 @@ const fetchRatings = async (restaurantId) => {
                     resizeMode="cover"
                   />
                 ) : (
-                  <View style={styles.restaurantImgPlaceholder}>
-                    <Text style={styles.restaurantImgEmoji}>
+                  <View style={
+                    styles.restaurantImgPlaceholder
+                  }>
+                    <Text style={
+                      styles.restaurantImgEmoji
+                    }>
                       🍔
                     </Text>
                   </View>
                 )}
-
-                {/* IMAGE OVERLAY BADGES */}
                 <View style={styles.imgBadges}>
                   <View style={styles.openBadge}>
                     <Text style={styles.openBadgeText}>
@@ -642,8 +631,6 @@ const fetchRatings = async (restaurantId) => {
                     </Text>
                   </View>
                 </View>
-
-                {/* CATEGORY TAG */}
                 <View style={styles.catTag}>
                   <Text style={styles.catTagText}>
                     {item.category}
@@ -653,47 +640,56 @@ const fetchRatings = async (restaurantId) => {
 
               {/* INFO */}
               <View style={styles.restaurantInfo}>
-
-                {/* NAME ROW */}
                 <View style={styles.restaurantNameRow}>
-                  <Text style={styles.restaurantName}
+                  <Text
+                    style={styles.restaurantName}
                     numberOfLines={1}>
                     {item.name}
                   </Text>
+
+                  {/* ✅ FIXED: Real ratings from API */}
                   <View style={styles.ratingWrap}>
                     <Text style={styles.ratingStar}>⭐</Text>
                     <Text style={styles.ratingText}>
-                      {getRating(item.id)}
+                      {restaurantRatings[item.id]?.avg
+                        || getRating(item.id)}
+                    </Text>
+                    <Text style={styles.ratingCount}>
+                      ({restaurantRatings[item.id]?.total
+                        || 0})
                     </Text>
                   </View>
                 </View>
 
-                {/* DESC */}
-                <Text style={styles.restaurantDesc}
+                <Text
+                  style={styles.restaurantDesc}
                   numberOfLines={1}>
                   {item.description || 'Local restaurant'}
                 </Text>
 
-                {/* ADDRESS */}
-                <Text style={styles.restaurantAddress}
+                <Text
+                  style={styles.restaurantAddress}
                   numberOfLines={1}>
                   📍 {item.address}
                 </Text>
 
-                {/* META ROW */}
                 <View style={styles.restaurantMetaRow}>
                   <View style={styles.restaurantMetaItem}>
                     <Text style={styles.restaurantMetaText}>
-                      🛵 {item.delivery_range_km}km range
+                      🛵 {item.delivery_range_km}km
                     </Text>
                   </View>
-                  <View style={styles.restaurantMetaDivider} />
+                  <View style={
+                    styles.restaurantMetaDivider
+                  } />
                   <View style={styles.restaurantMetaItem}>
                     <Text style={styles.restaurantMetaText}>
-                      💰 ₱{item.delivery_fee} fee
+                      💰 ₱{item.delivery_fee}
                     </Text>
                   </View>
-                  <View style={styles.restaurantMetaDivider} />
+                  <View style={
+                    styles.restaurantMetaDivider
+                  } />
                   <View style={styles.restaurantMetaItem}>
                     <Text style={styles.restaurantMetaText}>
                       ⏱️ 30-45 min
@@ -701,15 +697,15 @@ const fetchRatings = async (restaurantId) => {
                   </View>
                 </View>
 
-                {/* ORDER BUTTON */}
                 <TouchableOpacity
                   style={styles.restaurantOrderBtn}
                   onPress={() => fetchMenu(item)}>
-                  <Text style={styles.restaurantOrderBtnText}>
+                  <Text style={
+                    styles.restaurantOrderBtnText
+                  }>
                     View Menu →
                   </Text>
                 </TouchableOpacity>
-
               </View>
             </TouchableOpacity>
           )}
@@ -876,7 +872,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
-  // ── RESULTS ROW ───────────────────────────
+  // ── RESULTS ───────────────────────────────
   resultsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -948,8 +944,6 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 30,
   },
-
-  // ── RESTAURANT CARD ───────────────────────
   restaurantCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xxlarge,
@@ -959,8 +953,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     ...shadowMd,
   },
-
-  // ── IMAGE ─────────────────────────────────
   restaurantImgWrap: {
     position: 'relative',
     height: 170,
@@ -1009,8 +1001,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
   },
-
-  // ── RESTAURANT INFO ───────────────────────
   restaurantInfo: {
     padding: 16,
   },
@@ -1044,6 +1034,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
+  ratingCount: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '600',
+  },
   restaurantDesc: {
     fontSize: 12,
     color: colors.textLight,
@@ -1065,7 +1060,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  restaurantMetaItem: { flex: 1, alignItems: 'center' },
+  restaurantMetaItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
   restaurantMetaText: {
     fontSize: 11,
     color: colors.textMedium,
@@ -1090,7 +1088,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // ── HERO (Menu Screen) ────────────────────
+  // ── HERO ──────────────────────────────────
   heroWrap: {
     height: 300,
     position: 'relative',
@@ -1256,8 +1254,6 @@ const styles = StyleSheet.create({
     color: colors.textWhite,
     fontWeight: '900',
   },
-
-  // ── MENU COUNT ────────────────────────────
   menuCountRow: {
     paddingHorizontal: 20,
     paddingVertical: 10,
@@ -1270,8 +1266,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-
-  // ── MENU LIST ─────────────────────────────
   menuList: {
     padding: 16,
     paddingBottom: 120,

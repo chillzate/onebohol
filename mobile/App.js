@@ -25,6 +25,7 @@ import FoodScreen from './screens/FoodScreen';
 import OrderHistoryScreen from './screens/OrderHistoryScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
 import { ToastProvider, showToast } from './screens/ToastManager';
+import ProducerDashboardScreen from './screens/ProducerDashboardScreen';
 import {
   pickImageFromGallery,
   takePhoto,

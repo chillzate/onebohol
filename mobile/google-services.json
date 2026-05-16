@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "290744921516",
+    "project_id": "zavara-43603",
+    "storage_bucket": "zavara-43603.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:290744921516:android:f94ad5d8ae67ba22af1e09",
+        "android_client_info": {
+          "package_name": "com.zavara.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBlqPWL2ef_BLRoA7BiOxyV6n64Ce3lZ34"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
