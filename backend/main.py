@@ -2625,3 +2625,228 @@ def get_cuisine_sales(user_id: int, db: Session = Depends(get_db)):
             for item in top_items[:5]
         ]
     }
+
+# ============================================
+# GCASH PAYMENT ROUTES
+# ============================================
+
+@app.post("/payment/gcash/initiate")
+def initiate_gcash_payment(
+    order_id: int,
+    buyer_id: int,
+    db: Session = Depends(get_db)
+):
+    # Get order
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.buyer_id == buyer_id
+    ).first()
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+    if order.payment_status == "paid":
+        raise HTTPException(
+            status_code=400,
+            detail="Order already paid"
+        )
+
+    # Get seller GCash info
+    seller = db.query(User).filter(
+        User.id == order.seller_id
+    ).first()
+    if not seller:
+        raise HTTPException(
+            status_code=404,
+            detail="Seller not found"
+        )
+
+    return {
+        "message": "Send payment to this GCash number",
+        "order_id": order_id,
+        "amount": order.grand_total or order.total_price,
+        "seller_gcash_number": seller.gcash_number,
+        "seller_gcash_name": seller.gcash_name,
+        "instruction": "1. Open GCash app\n2. Send money to the number above\n3. Screenshot the receipt\n4. Upload the screenshot below"
+    }
+
+
+@app.post("/payment/gcash/upload/{order_id}")
+async def upload_gcash_screenshot(
+    order_id: int,
+    buyer_id: int,
+    gcash_reference: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    # Verify order belongs to buyer
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.buyer_id == buyer_id
+    ).first()
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+    if order.payment_status == "paid":
+        raise HTTPException(
+            status_code=400,
+            detail="Order already paid"
+        )
+
+    # Validate file type
+    if file.content_type not in [
+        "image/jpeg", "image/png",
+        "image/jpg", "image/webp"
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail="Only image files allowed"
+        )
+
+    # Upload screenshot to Cloudinary
+    file_bytes = await file.read()
+    result = upload_image(
+        file_bytes,
+        folder="zavara/gcash_screenshots"
+    )
+    if not result["success"]:
+        raise HTTPException(
+            status_code=500,
+            detail="Upload failed"
+        )
+
+    # Save screenshot URL and reference to order
+    order.gcash_screenshot = result["url"]
+    order.gcash_reference = gcash_reference
+    order.payment_method = "gcash"
+    order.payment_status = "pending_verification"
+    db.commit()
+
+    # Notify seller to verify payment
+    seller = db.query(User).filter(
+        User.id == order.seller_id
+    ).first()
+
+    if seller and seller.push_token:
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    "https://exp.host/--/api/v2/push/send",
+                    json={
+                        "to": seller.push_token,
+                        "title": "GCash Payment Received!",
+                        "body": f"Order #{str(order_id).zfill(4)} - Please verify the payment screenshot.",
+                        "sound": "default",
+                        "badge": 1,
+                        "data": {
+                            "order_id": order_id,
+                            "type": "payment_verification"
+                        }
+                    },
+                    headers={"Content-Type": "application/json"}
+                )
+        except:
+            pass
+
+    return {
+        "message": "Screenshot uploaded! Waiting for seller verification.",
+        "order_id": order_id,
+        "screenshot_url": result["url"],
+        "gcash_reference": gcash_reference,
+        "payment_status": "pending_verification"
+    }
+
+
+@app.post("/payment/gcash/verify/{order_id}")
+async def verify_gcash_payment(
+    order_id: int,
+    seller_id: int,
+    approved: bool,
+    reason: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    # Verify order belongs to seller
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.seller_id == seller_id
+    ).first()
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    buyer = db.query(User).filter(
+        User.id == order.buyer_id
+    ).first()
+
+    if approved:
+        # Mark as paid
+        order.payment_status = "paid"
+        order.status = "confirmed"
+        db.commit()
+
+        # Notify buyer payment approved
+        if buyer and buyer.push_token:
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        "https://exp.host/--/api/v2/push/send",
+                        json={
+                            "to": buyer.push_token,
+                            "title": "Payment Verified!",
+                            "body": f"Your GCash payment for order #{str(order_id).zfill(4)} has been verified!",
+                            "sound": "default",
+                            "badge": 1,
+                            "data": {
+                                "order_id": order_id,
+                                "type": "payment_approved"
+                            }
+                        },
+                        headers={"Content-Type": "application/json"}
+                    )
+            except:
+                pass
+
+        return {
+            "message": "Payment verified! Order confirmed.",
+            "order_id": order_id,
+            "payment_status": "paid",
+            "order_status": "confirmed"
+        }
+    else:
+        # Reject payment
+        order.payment_status = "unpaid"
+        order.gcash_screenshot = None
+        order.gcash_reference = None
+        db.commit()
+
+        # Notify buyer payment rejected
+        if buyer and buyer.push_token:
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        "https://exp.host/--/api/v2/push/send",
+                        json={
+                            "to": buyer.push_token,
+                            "title": "Payment Rejected",
+                            "body": f"Your payment for order #{str(order_id).zfill(4)} was rejected. {reason or 'Please try again.'}",
+                            "sound": "default",
+                            "badge": 1,
+                            "data": {
+                                "order_id": order_id,
+                                "type": "payment_rejected"
+                            }
+                        },
+                        headers={"Content-Type": "application/json"}
+                    )
+            except:
+                pass
+
+        return {
+            "message": "Payment rejected.",
+            "order_id": order_id,
+            
