@@ -10,3 +10,5 @@ cloudinary
 python-dotenv
 requests
 httpx
+psycopg2-binary
+psycopg2
