@@ -1,11 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-# Add to schemas.py
-
-from pydantic import BaseModel
-from typing import Optional
-from datetime import datetime
 
 class ReviewCreate(BaseModel):
     rating: int
@@ -27,7 +22,7 @@ class ReviewResponse(BaseModel):
 
     class Config:
         from_attributes = True
-        
+
 # USER SCHEMAS
 class UserRegister(BaseModel):
     name: str
@@ -115,7 +110,7 @@ class MenuItemResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# PRODUCT SCHEMAS (Farm products)
+# PRODUCT SCHEMAS
 class ProductCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -123,6 +118,7 @@ class ProductCreate(BaseModel):
     unit: str
     quantity: int
     category: str
+    market_type: Optional[str] = "wholesale" # ✅ NEW
 
 class ProductResponse(BaseModel):
     id: int
@@ -134,6 +130,14 @@ class ProductResponse(BaseModel):
     quantity: int
     category: str
     is_available: bool
+    is_approved: Optional[bool] = False       # ✅ ADDED
+    total_sold: Optional[int] = 0             # ✅ ADDED
+    rating: Optional[float] = 0.0            # ✅ ADDED
+    total_reviews: Optional[int] = 0         # ✅ ADDED
+    image_url: Optional[str] = None          # ✅ ADDED
+    barangay: Optional[str] = None           # ✅ ADDED
+    municipality: Optional[str] = None       # ✅ ADDED
+    market_type: Optional[str] = "wholesale" # ✅ NEW
 
     class Config:
         from_attributes = True
