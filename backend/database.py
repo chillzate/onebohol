@@ -7,15 +7,12 @@ import os
 
 load_dotenv()
 
-# ✅ Uses Railway PostgreSQL in production
-# ✅ Falls back to SQLite locally
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "sqlite:///./zavara.db"
 )
 
-# ✅ Railway gives postgres://
-# SQLAlchemy needs postgresql://
+# Railway fix
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace(
         "postgres://",
@@ -23,8 +20,15 @@ if DATABASE_URL.startswith("postgres://"):
         1
     )
 
-# ✅ Different settings for
-# SQLite vs PostgreSQL
+# ✅ Force psycopg2 driver explicitly
+if "postgresql" in DATABASE_URL:
+    if "psycopg2" not in DATABASE_URL:
+        DATABASE_URL = DATABASE_URL.replace(
+            "postgresql://",
+            "postgresql+psycopg2://",
+            1
+        )
+
 if "sqlite" in DATABASE_URL:
     engine = create_engine(
         DATABASE_URL,
