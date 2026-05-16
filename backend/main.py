@@ -2760,7 +2760,7 @@ async def upload_gcash_screenshot(
     }
 
 
-@app.post("/payment/gcash/verify/{order_id}")
+ @app.post("/payment/gcash/verify/{order_id}")
 async def verify_gcash_payment(
     order_id: int,
     seller_id: int,
@@ -2849,4 +2849,68 @@ async def verify_gcash_payment(
         return {
             "message": "Payment rejected.",
             "order_id": order_id,
-            
+
+
+@app.get("/payment/gcash/pending/{seller_id}")
+def get_pending_payments(
+    seller_id: int,
+    db: Session = Depends(get_db)
+):
+    orders = db.query(Order).filter(
+        Order.seller_id == seller_id,
+        Order.payment_status == "pending_verification",
+        Order.payment_method == "gcash"
+    ).order_by(Order.created_at.desc()).all()
+
+    result = []
+    for order in orders:
+        buyer = db.query(User).filter(User.id == order.buyer_id).first()
+        item_name = "Unknown"
+        if order.product_id:
+            product = db.query(Product).filter(Product.id == order.product_id).first()
+            if product:
+                item_name = product.name
+        elif order.menu_item_id:
+            menu_item = db.query(MenuItem).filter(MenuItem.id == order.menu_item_id).first()
+            if menu_item:
+                item_name = menu_item.name
+        result.append({
+            "order_id": order.id,
+            "buyer_name": buyer.name if buyer else "Unknown",
+            "buyer_phone": buyer.phone if buyer else "",
+            "item_name": item_name,
+            "quantity": order.quantity,
+            "amount": order.grand_total or order.total_price,
+            "gcash_screenshot": order.gcash_screenshot,
+            "gcash_reference": order.gcash_reference,
+            "payment_status": order.payment_status,
+            "order_type": order.order_type,
+            "created_at": str(order.created_at)
+        })
+    return {
+        "total_pending": len(result),
+        "pending_payments": result
+    }
+
+
+@app.get("/payment/status/{order_id}")
+def get_payment_status(
+    order_id: int,
+    buyer_id: int,
+    db: Session = Depends(get_db)
+):
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.buyer_id == buyer_id
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return {
+        "order_id": order_id,
+        "payment_method": order.payment_method,
+        "payment_status": order.payment_status,
+        "gcash_reference": order.gcash_reference,
+        "gcash_screenshot": order.gcash_screenshot,
+        "order_status": order.status,
+        "amount": order.grand_total or order.total_price
+    }
