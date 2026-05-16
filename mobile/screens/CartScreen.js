@@ -1,4 +1,7 @@
-import { useState } from 'react';
+// ============================================
+// ZAVARA CART SCREEN - COMPLETE FIXED v2.1
+// ============================================
+import { useState, useRef } from 'react'; // 🔧 FIX: from 'react'
 import {
   View,
   Text,
@@ -7,51 +10,47 @@ import {
   TouchableOpacity,
   StatusBar,
   TextInput,
-  Animated,
-  useRef,
+  Alert,
+  ActivityIndicator,
+  Image,
 } from 'react-native';
+// 🔧 FIX: Removed Animated (unused), removed useRef from RN
 import axios from 'axios';
 import {
   colors,
   shadow,
   shadowMd,
-  shadowLg,
-  shadowDark,
-  shadowStrong,
   shadowGold,
   borderRadius,
 } from '../theme';
-import {
-  ErrorModal,
-  OrderSuccessModal,
-} from './CustomToast';
-
-const API_URL = 'https://onebohol-production.up.railway.app';
+import { API_URL } from '../config';
 
 export default function CartScreen({
   cart,
   setCart,
   userId,
   onBack,
-  onOrderSuccess,
+  onOrderPlaced, // 🔧 FIX: consistent prop name
 }) {
-  const [address, setAddress] = useState('');
-  const [placing, setPlacing] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [showError, setShowError] = useState(false);
-  const [showAddressError, setShowAddressError] = useState(false);
-  const [orderTotal, setOrderTotal] = useState(0);
+  const [address, setAddress]           = useState('');
+  const [placing, setPlacing]           = useState(false);
+  const [orderSuccess, setOrderSuccess] = useState(false);
+  const [orderTotal, setOrderTotal]     = useState(0);
   const [addressFocused, setAddressFocused] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('cod'); // 🆕
 
+  // ── CART CALCULATIONS ───────────────────
   const totalItems = cart.reduce(
     (sum, i) => sum + i.quantity, 0
   );
   const subtotal = cart.reduce(
     (sum, i) => sum + i.price * i.quantity, 0
   );
-  const deliveryFee = 49;
+  // 🔧 Free delivery over ₱500
+  const deliveryFee = subtotal >= 500 ? 0 : 49;
   const total = subtotal + deliveryFee;
 
+  // ── CART FUNCTIONS ──────────────────────
   const increaseQty = (id) =>
     setCart(cart.map(i =>
       i.id === id
@@ -62,7 +61,20 @@ export default function CartScreen({
   const decreaseQty = (id) => {
     const item = cart.find(i => i.id === id);
     if (item.quantity === 1) {
-      setCart(cart.filter(i => i.id !== id));
+      Alert.alert(
+        'Remove Item',
+        `Remove ${item.name} from cart?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: () => setCart(
+              cart.filter(i => i.id !== id)
+            ),
+          },
+        ]
+      );
     } else {
       setCart(cart.map(i =>
         i.id === id
@@ -72,52 +84,155 @@ export default function CartScreen({
     }
   };
 
-  const clearCart = () => setCart([]);
+  const clearCart = () => {
+    Alert.alert(
+      'Clear Cart',
+      'Remove all items from your cart?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear All',
+          style: 'destructive',
+          onPress: () => setCart([]),
+        },
+      ]
+    );
+  };
 
+  const getCategoryEmoji = (category) => {
+    const map = {
+      seafood: '🐟', vegetables: '🥦',
+      rice: '🌾', fruits: '🍌',
+      livestock: '🐄', other: '🌿',
+    };
+    return map[category?.toLowerCase()] || '🌴';
+  };
+
+  // ── PLACE ORDER ─────────────────────────
   const placeOrder = async () => {
     if (!address.trim()) {
-      setShowAddressError(true);
+      Alert.alert(
+        '📍 Address Required',
+        'Please enter your delivery address before placing your order.'
+      );
       return;
     }
+    if (address.trim().length < 10) {
+      Alert.alert(
+        '📍 Address Too Short',
+        'Please enter a complete delivery address.'
+      );
+      return;
+    }
+
     setPlacing(true);
     try {
+      // 🔧 FIX: Handle BOTH food and market orders
       for (const item of cart) {
-        await axios.post(
-          `${API_URL}/orders?buyer_id=${userId}`,
-          {
-            order_type: 'food',
-            menu_item_id: item.id,
-            quantity: item.quantity,
-            delivery_address: address,
-          },
-          {
-            headers: {
-              'Content-Type': 'application/json',
+        if (item.order_type === 'food' || item.menu_item_id) {
+          // Food order
+          await axios.post(
+            `${API_URL}/orders?buyer_id=${userId}`,
+            {
+              order_type: 'food',
+              menu_item_id: item.menu_item_id || item.id,
+              quantity: item.quantity,
+              delivery_address: address,
+              payment_method: paymentMethod,
             },
-          }
-        );
+            { headers: { 'Content-Type': 'application/json' } }
+          );
+        } else {
+          // Market/product order
+          await axios.post(
+            `${API_URL}/orders?buyer_id=${userId}`,
+            {
+              order_type: 'market',
+              product_id: item.product_id || item.id,
+              quantity: item.quantity,
+              delivery_address: address,
+              payment_method: paymentMethod,
+            },
+            { headers: { 'Content-Type': 'application/json' } }
+          );
+        }
       }
+
       setOrderTotal(total);
       setCart([]);
-      setShowSuccess(true);
+      setOrderSuccess(true);
     } catch (error) {
-      setShowError(true);
+      const msg = error.response?.data?.detail ||
+        'Could not place your order. Please check your connection.';
+      Alert.alert('Order Failed ❌', msg);
     }
     setPlacing(false);
   };
 
   // ============================================
-  // EMPTY CART
+  // SUCCESS SCREEN
   // ============================================
-  if (cart.length === 0 && !showSuccess) {
+  if (orderSuccess) {
     return (
       <View style={styles.container}>
         <StatusBar
           backgroundColor={colors.headerBg}
           barStyle="dark-content"
         />
+        <View style={styles.successWrap}>
+          <View style={styles.successCircle}>
+            <Text style={styles.successEmoji}>✅</Text>
+          </View>
+          <Text style={styles.successTitle}>
+            Order Placed!
+          </Text>
+          <Text style={styles.successSub}>
+            Your order has been placed successfully.
+            {'\n'}We'll notify you when it's confirmed!
+          </Text>
+          <View style={styles.successTotalCard}>
+            <Text style={styles.successTotalLabel}>
+              TOTAL PAID
+            </Text>
+            <Text style={styles.successTotalValue}>
+              ₱{orderTotal.toFixed(2)}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.trackOrderBtn}
+            onPress={() => {
+              setOrderSuccess(false);
+              onOrderPlaced?.();
+            }}>
+            <Text style={styles.trackOrderBtnText}>
+              📦 TRACK MY ORDER
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.continueBrowsingBtn}
+            onPress={() => {
+              setOrderSuccess(false);
+              onBack?.();
+            }}>
+            <Text style={styles.continueBrowsingText}>
+              Continue Shopping
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
-        {/* HEADER */}
+  // ============================================
+  // EMPTY CART
+  // ============================================
+  if (!cart || cart.length === 0) {
+    return (
+      <View style={styles.container}>
+        <StatusBar
+          backgroundColor={colors.headerBg}
+          barStyle="dark-content"
+        />
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.headerBackBtn}
@@ -127,8 +242,6 @@ export default function CartScreen({
           <Text style={styles.headerTitle}>My Cart</Text>
           <View style={{ width: 38 }} />
         </View>
-
-        {/* EMPTY STATE */}
         <View style={styles.emptyWrap}>
           <View style={styles.emptyCircle}>
             <Text style={styles.emptyEmoji}>🛒</Text>
@@ -137,30 +250,17 @@ export default function CartScreen({
             Your Cart is Empty
           </Text>
           <Text style={styles.emptySub}>
-            Add some delicious food{'\n'}
+            Add some food or fresh products{'\n'}
             to get started!
           </Text>
           <TouchableOpacity
             style={styles.emptyBtn}
             onPress={onBack}>
             <Text style={styles.emptyBtnText}>
-              Browse Restaurants →
+              Browse Now →
             </Text>
           </TouchableOpacity>
         </View>
-
-        <OrderSuccessModal
-          visible={showSuccess}
-          total={orderTotal.toFixed(2)}
-          onClose={() => {
-            setShowSuccess(false);
-            onOrderSuccess();
-          }}
-          onTrack={() => {
-            setShowSuccess(false);
-            onOrderSuccess();
-          }}
-        />
       </View>
     );
   }
@@ -198,21 +298,32 @@ export default function CartScreen({
         </TouchableOpacity>
       </View>
 
-      {/* SCROLL */}
+      {/* FREE DELIVERY BANNER */}
+      {subtotal < 500 && (
+        <View style={styles.freeDeliveryBanner}>
+          <Text style={styles.freeDeliveryText}>
+            🚀 Add ₱{(500 - subtotal).toFixed(2)} more for
+            FREE delivery!
+          </Text>
+        </View>
+      )}
+      {subtotal >= 500 && (
+        <View style={[styles.freeDeliveryBanner,
+          { backgroundColor: colors.successPale,
+            borderColor: colors.success + '30' }]}>
+          <Text style={[styles.freeDeliveryText,
+            { color: colors.success }]}>
+            🎉 You got FREE delivery!
+          </Text>
+        </View>
+      )}
+
+      {/* SCROLL CONTENT */}
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}>
 
-        {/* RESTAURANT NOTE */}
-        <View style={styles.restaurantNote}>
-          <Text style={styles.restaurantNoteIcon}>🍴</Text>
-          <Text style={styles.restaurantNoteText}>
-            Your order will be prepared fresh
-            and delivered hot!
-          </Text>
-        </View>
-
-        {/* SECTION - ORDER ITEMS */}
+        {/* ORDER ITEMS */}
         <Text style={styles.sectionLabel}>
           ORDER ITEMS
         </Text>
@@ -220,12 +331,21 @@ export default function CartScreen({
         {cart.map((item, index) => (
           <View key={item.id} style={styles.cartCard}>
 
-            {/* NUMBER */}
-            <View style={styles.cartNumber}>
-              <Text style={styles.cartNumberText}>
-                {index + 1}
-              </Text>
-            </View>
+            {/* IMAGE or EMOJI */}
+            {item.image_url ? (
+              <Image
+                source={{ uri: item.image_url }}
+                style={styles.cartItemImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.cartNumber}>
+                <Text style={styles.cartNumberText}>
+                  {getCategoryEmoji(item.category) ||
+                    (index + 1).toString()}
+                </Text>
+              </View>
+            )}
 
             {/* INFO */}
             <View style={styles.cartInfo}>
@@ -234,11 +354,26 @@ export default function CartScreen({
                 {item.name}
               </Text>
               <Text style={styles.cartUnitPrice}>
-                ₱{item.price.toFixed(2)} each
+                ₱{item.price.toFixed(2)}{' '}
+                {item.unit ? `per ${item.unit}` : 'each'}
               </Text>
               <Text style={styles.cartSubtotal}>
                 ₱{(item.price * item.quantity).toFixed(2)}
               </Text>
+              {/* 🆕 Order type badge */}
+              <View style={[styles.orderTypeBadge, {
+                backgroundColor: item.order_type === 'food'
+                  ? colors.cuisineBg : colors.farmerBg,
+              }]}>
+                <Text style={[styles.orderTypeBadgeText, {
+                  color: item.order_type === 'food'
+                    ? colors.cuisineColor
+                    : colors.farmerColor,
+                }]}>
+                  {item.order_type === 'food'
+                    ? '🍴 Food' : '🌾 Market'}
+                </Text>
+              </View>
             </View>
 
             {/* QTY CONTROLS */}
@@ -266,7 +401,7 @@ export default function CartScreen({
           </View>
         ))}
 
-        {/* SECTION - DELIVERY ADDRESS */}
+        {/* DELIVERY ADDRESS */}
         <Text style={styles.sectionLabel}>
           DELIVERY ADDRESS
         </Text>
@@ -286,15 +421,14 @@ export default function CartScreen({
           />
         </View>
 
-        {/* SECTION - ORDER SUMMARY */}
+        {/* ORDER SUMMARY */}
         <Text style={styles.sectionLabel}>
           ORDER SUMMARY
         </Text>
         <View style={styles.summaryCard}>
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>
-              Subtotal ({totalItems}{' '}
-              {totalItems === 1 ? 'item' : 'items'})
+              Subtotal ({totalItems} items)
             </Text>
             <Text style={styles.summaryValue}>
               ₱{subtotal.toFixed(2)}
@@ -304,8 +438,11 @@ export default function CartScreen({
             <Text style={styles.summaryLabel}>
               Delivery Fee
             </Text>
-            <Text style={styles.summaryValue}>
-              ₱{deliveryFee}.00
+            <Text style={[styles.summaryValue,
+              deliveryFee === 0 && { color: colors.success }]}>
+              {deliveryFee === 0
+                ? '🎉 FREE'
+                : `₱${deliveryFee}.00`}
             </Text>
           </View>
           <View style={styles.summaryRow}>
@@ -328,11 +465,17 @@ export default function CartScreen({
           </View>
         </View>
 
-        {/* SECTION - PAYMENT */}
+        {/* 🆕 PAYMENT METHOD SELECTOR */}
         <Text style={styles.sectionLabel}>
           PAYMENT METHOD
         </Text>
-        <View style={styles.paymentCard}>
+
+        {/* COD Option */}
+        <TouchableOpacity
+          style={[styles.paymentCard,
+            paymentMethod === 'cod' &&
+            styles.paymentCardActive]}
+          onPress={() => setPaymentMethod('cod')}>
           <View style={styles.paymentIconWrap}>
             <Text style={styles.paymentIcon}>💵</Text>
           </View>
@@ -344,19 +487,43 @@ export default function CartScreen({
               Pay when your order arrives
             </Text>
           </View>
-          <View style={styles.paymentCheck}>
-            <Text style={styles.paymentCheckText}>✓</Text>
+          <View style={[styles.paymentRadio,
+            paymentMethod === 'cod' &&
+            styles.paymentRadioActive]}>
+            {paymentMethod === 'cod' && (
+              <Text style={styles.paymentRadioCheck}>✓</Text>
+            )}
           </View>
-        </View>
+        </TouchableOpacity>
 
-        {/* MORE PAYMENT OPTIONS SOON */}
-        <View style={styles.morePaymentWrap}>
-          <Text style={styles.morePaymentText}>
-            🔜 GCash · Maya · Credit Card coming soon!
-          </Text>
-        </View>
+        {/* GCash Option */}
+        <TouchableOpacity
+          style={[styles.paymentCard,
+            paymentMethod === 'gcash' &&
+            styles.paymentCardActive]}
+          onPress={() => setPaymentMethod('gcash')}>
+          <View style={[styles.paymentIconWrap,
+            { backgroundColor: colors.infoPale }]}>
+            <Text style={styles.paymentIcon}>📱</Text>
+          </View>
+          <View style={styles.paymentInfo}>
+            <Text style={styles.paymentTitle}>
+              GCash
+            </Text>
+            <Text style={styles.paymentSub}>
+              Pay via GCash (screenshot required)
+            </Text>
+          </View>
+          <View style={[styles.paymentRadio,
+            paymentMethod === 'gcash' &&
+            styles.paymentRadioActive]}>
+            {paymentMethod === 'gcash' && (
+              <Text style={styles.paymentRadioCheck}>✓</Text>
+            )}
+          </View>
+        </TouchableOpacity>
 
-        {/* DELIVERY NOTE */}
+        {/* DELIVERY INFO */}
         <View style={styles.noteCard}>
           <View style={styles.noteRow}>
             <Text style={styles.noteIcon}>🛵</Text>
@@ -389,6 +556,11 @@ export default function CartScreen({
           <Text style={styles.checkoutTotal}>
             ₱{total.toFixed(2)}
           </Text>
+          {deliveryFee === 0 && (
+            <Text style={styles.checkoutFreeTag}>
+              🎉 Free Delivery!
+            </Text>
+          )}
         </View>
         <TouchableOpacity
           style={[
@@ -397,37 +569,18 @@ export default function CartScreen({
           ]}
           onPress={placeOrder}
           disabled={placing}>
-          <Text style={styles.checkoutBtnText}>
-            {placing ? '⏳ Placing...' : '🚀 PLACE ORDER'}
-          </Text>
+          {placing ? (
+            <ActivityIndicator
+              size="small"
+              color={colors.textWhite}
+            />
+          ) : (
+            <Text style={styles.checkoutBtnText}>
+              🚀 PLACE ORDER
+            </Text>
+          )}
         </TouchableOpacity>
       </View>
-
-      {/* MODALS */}
-      <OrderSuccessModal
-        visible={showSuccess}
-        total={orderTotal.toFixed(2)}
-        onClose={() => {
-          setShowSuccess(false);
-          onOrderSuccess();
-        }}
-        onTrack={() => {
-          setShowSuccess(false);
-          onOrderSuccess();
-        }}
-      />
-      <ErrorModal
-        visible={showError}
-        onClose={() => setShowError(false)}
-        title="Order Failed ❌"
-        message="Could not place your order. Please check your connection and try again."
-      />
-      <ErrorModal
-        visible={showAddressError}
-        onClose={() => setShowAddressError(false)}
-        title="Address Required 📍"
-        message="Please enter your delivery address before placing your order."
-      />
 
     </View>
   );
@@ -443,7 +596,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
 
-  // ── HEADER ────────────────────────────────
+  // ── HEADER ──────────────────────────────
   header: {
     backgroundColor: colors.headerBg,
     paddingTop: 52,
@@ -509,34 +662,28 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  // ── SCROLL ────────────────────────────────
+  // 🆕 FREE DELIVERY BANNER ────────────────
+  freeDeliveryBanner: {
+    backgroundColor: colors.warningPale,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.warning + '30',
+  },
+  freeDeliveryText: {
+    color: colors.warning,
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+
+  // ── SCROLL ──────────────────────────────
   scrollContent: {
     padding: 20,
     paddingBottom: 140,
   },
 
-  // ── RESTAURANT NOTE ───────────────────────
-  restaurantNote: {
-    backgroundColor: colors.cuisineBg,
-    borderRadius: borderRadius.large,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 22,
-    borderWidth: 1,
-    borderColor: colors.cuisineBorder,
-  },
-  restaurantNoteIcon: { fontSize: 24 },
-  restaurantNoteText: {
-    color: colors.cuisineColor,
-    fontSize: 12,
-    fontWeight: '600',
-    flex: 1,
-    lineHeight: 18,
-  },
-
-  // ── SECTION LABEL ─────────────────────────
+  // ── SECTION LABEL ───────────────────────
   sectionLabel: {
     color: colors.textLight,
     fontSize: 10,
@@ -546,11 +693,11 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  // ── CART CARD ─────────────────────────────
+  // ── CART CARD ───────────────────────────
   cartCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
-    padding: 16,
+    padding: 14,
     marginBottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
@@ -559,10 +706,17 @@ const styles = StyleSheet.create({
     gap: 12,
     ...shadow,
   },
+  // 🆕 Image support
+  cartItemImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: colors.inputBackground,
+  },
   cartNumber: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     backgroundColor: colors.primaryPale,
     alignItems: 'center',
     justifyContent: 'center',
@@ -570,29 +724,39 @@ const styles = StyleSheet.create({
     borderColor: colors.borderGold,
   },
   cartNumberText: {
-    color: colors.primary,
-    fontWeight: '900',
-    fontSize: 14,
+    fontSize: 22,
   },
   cartInfo: { flex: 1 },
   cartName: {
     fontSize: 14,
     fontWeight: '800',
     color: colors.textDark,
-    marginBottom: 3,
+    marginBottom: 2,
   },
   cartUnitPrice: {
     fontSize: 11,
     color: colors.textMuted,
-    marginBottom: 3,
+    marginBottom: 2,
   },
   cartSubtotal: {
     fontSize: 14,
-    color: colors.cuisineColor,
+    color: colors.primary,
     fontWeight: '900',
+    marginBottom: 4,
+  },
+  // 🆕 Order type badge
+  orderTypeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: borderRadius.small,
+    alignSelf: 'flex-start',
+  },
+  orderTypeBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
   },
 
-  // ── QTY CONTROLS ──────────────────────────
+  // ── QTY CONTROLS ────────────────────────
   qtyWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -609,8 +773,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   qtyBtnPlus: {
-    backgroundColor: colors.cuisineColor,
-    borderColor: colors.cuisineColor,
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   qtyBtnText: {
     fontSize: 18,
@@ -634,7 +798,7 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
 
-  // ── ADDRESS ───────────────────────────────
+  // ── ADDRESS ─────────────────────────────
   addressCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
@@ -649,12 +813,9 @@ const styles = StyleSheet.create({
   },
   addressCardFocused: {
     borderColor: colors.primary,
-    backgroundColor: colors.cardBackground,
+    borderWidth: 1.5,
   },
-  addressIcon: {
-    fontSize: 22,
-    marginTop: 2,
-  },
+  addressIcon: { fontSize: 22, marginTop: 2 },
   addressInput: {
     flex: 1,
     fontSize: 14,
@@ -663,7 +824,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
 
-  // ── SUMMARY ───────────────────────────────
+  // ── SUMMARY ─────────────────────────────
   summaryCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
@@ -710,30 +871,34 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
-  // ── PAYMENT ───────────────────────────────
+  // 🆕 PAYMENT METHOD ──────────────────────
   paymentCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
-    padding: 18,
+    padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: colors.borderGold,
+    borderColor: colors.border,
     marginBottom: 10,
     gap: 14,
     ...shadow,
   },
+  paymentCardActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryPale,
+  },
   paymentIconWrap: {
-    width: 50,
-    height: 50,
-    borderRadius: 16,
+    width: 46,
+    height: 46,
+    borderRadius: 14,
     backgroundColor: colors.primaryPale,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.borderGold,
   },
-  paymentIcon: { fontSize: 26 },
+  paymentIcon: { fontSize: 24 },
   paymentInfo: { flex: 1 },
   paymentTitle: {
     fontSize: 14,
@@ -745,32 +910,26 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textLight,
   },
-  paymentCheck: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: colors.primary,
+  paymentRadio: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    ...shadowGold,
   },
-  paymentCheckText: {
+  paymentRadioActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+  paymentRadioCheck: {
     color: colors.textWhite,
+    fontSize: 12,
     fontWeight: '900',
-    fontSize: 15,
-  },
-  morePaymentWrap: {
-    alignItems: 'center',
-    marginBottom: 22,
-    paddingVertical: 6,
-  },
-  morePaymentText: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
   },
 
-  // ── NOTE CARD ─────────────────────────────
+  // ── NOTE CARD ───────────────────────────
   noteCard: {
     backgroundColor: colors.primaryPale,
     borderRadius: borderRadius.xlarge,
@@ -779,6 +938,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderGold,
     gap: 10,
     marginBottom: 10,
+    marginTop: 10,
   },
   noteRow: {
     flexDirection: 'row',
@@ -793,7 +953,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // ── EMPTY ─────────────────────────────────
+  // ── EMPTY ───────────────────────────────
   emptyWrap: {
     flex: 1,
     alignItems: 'center',
@@ -839,14 +999,93 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  // ── CHECKOUT FOOTER ───────────────────────
+  // ── SUCCESS SCREEN ──────────────────────
+  successWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  successCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: colors.successPale,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+    borderWidth: 2,
+    borderColor: colors.success + '40',
+  },
+  successEmoji: { fontSize: 60 },
+  successTitle: {
+    fontSize: 30,
+    fontWeight: '900',
+    color: colors.textDark,
+    marginBottom: 10,
+  },
+  successSub: {
+    fontSize: 14,
+    color: colors.textLight,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 28,
+  },
+  successTotalCard: {
+    backgroundColor: colors.dark,
+    borderRadius: borderRadius.xlarge,
+    padding: 20,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: colors.borderGold,
+  },
+  successTotalLabel: {
+    color: colors.textLight,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 2,
+    marginBottom: 8,
+  },
+  successTotalValue: {
+    color: colors.primaryLight,
+    fontSize: 36,
+    fontWeight: '900',
+  },
+  trackOrderBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 28,
+    paddingVertical: 16,
+    borderRadius: borderRadius.large,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 12,
+    ...shadowGold,
+  },
+  trackOrderBtnText: {
+    color: colors.textWhite,
+    fontWeight: '900',
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+  continueBrowsingBtn: {
+    paddingVertical: 12,
+  },
+  continueBrowsingText: {
+    color: colors.textLight,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // ── CHECKOUT FOOTER ─────────────────────
   checkoutFooter: {
     position: 'absolute',
     bottom: 0,
     width: '100%',
     backgroundColor: colors.cardBackground,
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 14,
     paddingBottom: 30,
     flexDirection: 'row',
     alignItems: 'center',
@@ -861,18 +1100,26 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.5,
-    marginBottom: 3,
+    marginBottom: 2,
   },
   checkoutTotal: {
     color: colors.textDark,
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '900',
+  },
+  checkoutFreeTag: {
+    color: colors.success,
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 2,
   },
   checkoutBtn: {
     backgroundColor: colors.primary,
     paddingHorizontal: 22,
     paddingVertical: 16,
     borderRadius: borderRadius.large,
+    minWidth: 140,
+    alignItems: 'center',
     ...shadowGold,
   },
   checkoutBtnDisabled: { opacity: 0.6 },

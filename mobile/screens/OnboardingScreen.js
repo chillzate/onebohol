@@ -1,4 +1,12 @@
-import { useState, useRef, useEffect } from 'react';
+// ============================================
+// ZAVARA ONBOARDING - COMPLETE FIXED v2.1
+// ============================================
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+} from 'react';
 import {
   View,
   Text,
@@ -12,16 +20,14 @@ import {
 import {
   colors,
   borderRadius,
-  shadowStrong,
   shadowGold,
-  shadowMd,
 } from '../theme';
 
 const { width, height } = Dimensions.get('window');
 
 const SLIDES = [
   {
-    id: 1,
+    id:       1,
     emoji:    '🌴',
     title:    'Welcome to ZAVARA',
     subtitle: "BOHOL'S SUPER APP",
@@ -29,10 +35,10 @@ const SLIDES = [
     bg:       '#FFFBF2',
     accent:   colors.primary,
     iconBg:   colors.primaryPale,
-    tag:      'THE ISLAND\'S PULSE',
+    tag:      "THE ISLAND'S PULSE",
   },
   {
-    id: 2,
+    id:       2,
     emoji:    '🍴',
     title:    'Order Delicious Food',
     subtitle: 'CUISINE PARTNER',
@@ -43,18 +49,18 @@ const SLIDES = [
     tag:      'FOOD DELIVERY',
   },
   {
-    id: 3,
+    id:       3,
     emoji:    '🌾',
     title:    'Support Local Farmers',
     subtitle: 'HARVEST MARKET',
-    desc:     'Buy fresh produce directly from Bohol\'s farmers and fishermen. Farm to table, the ZAVARA way.',
+    desc:     "Buy fresh produce directly from Bohol's farmers and fishermen. Farm to table, the ZAVARA way.",
     bg:       '#F5FBF7',
     accent:   colors.farmerColor,
     iconBg:   colors.farmerBg,
     tag:      'FRESH & LOCAL',
   },
   {
-    id: 4,
+    id:       4,
     emoji:    '🚐',
     title:    'Swift Transport',
     subtitle: 'SWIFT PARTNER',
@@ -65,7 +71,7 @@ const SLIDES = [
     tag:      'GO ANYWHERE',
   },
   {
-    id: 5,
+    id:       5,
     emoji:    '🏨',
     title:    'Explore Bohol',
     subtitle: 'HAVEN & TOURISM',
@@ -76,11 +82,11 @@ const SLIDES = [
     tag:      'DISCOVER BOHOL',
   },
   {
-    id: 6,
+    id:       6,
     emoji:    '🚀',
     title:    'Ready to Start?',
     subtitle: 'JOIN ZAVARA TODAY',
-    desc:     'Create your free account and be part of Bohol\'s fastest growing super app community.',
+    desc:     "Create your free account and be part of Bohol's fastest growing super app community.",
     bg:       '#FFFBF2',
     accent:   colors.primary,
     iconBg:   colors.primaryPale,
@@ -91,37 +97,34 @@ const SLIDES = [
 export default function OnboardingScreen({ onFinish }) {
   const [currentSlide, setCurrentSlide] = useState(0);
 
-  // Animations
+  // ── ANIMATIONS ──────────────────────────────
   const fadeAnim    = useRef(new Animated.Value(1)).current;
   const scaleAnim   = useRef(new Animated.Value(1)).current;
   const slideAnim   = useRef(new Animated.Value(0)).current;
-  const progressAnim = useRef(new Animated.Value(0)).current;
+  const progressAnim = useRef(new Animated.Value(
+    1 / SLIDES.length
+  )).current;
   const emojiScale  = useRef(new Animated.Value(1)).current;
   const emojiFloat  = useRef(new Animated.Value(0)).current;
+  const floatLoop   = useRef(null); // 🔧 Track loop for cleanup
 
-  // Swipe gesture
+  // ── SWIPE GESTURE ───────────────────────────
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx < -50) {
-          // Swipe left = next
-          handleNext();
-        } else if (gestureState.dx > 50) {
-          // Swipe right = prev
-          handlePrev();
-        }
+      // 🔧 FIX: Only claim responder for horizontal swipes
+      onMoveShouldSetPanResponder: (_, g) =>
+        Math.abs(g.dx) > Math.abs(g.dy) &&
+        Math.abs(g.dx) > 10,
+      onPanResponderRelease: (_, g) => {
+        if (g.dx < -50) handleNext();
+        else if (g.dx > 50) handlePrev();
       },
     })
   ).current;
 
+  // ── FLOAT ANIMATION (runs once) ─────────────
   useEffect(() => {
-    startAnimations();
-  }, [currentSlide]);
-
-  useEffect(() => {
-    // Floating emoji animation
-    Animated.loop(
+    floatLoop.current = Animated.loop(
       Animated.sequence([
         Animated.timing(emojiFloat, {
           toValue: -12,
@@ -134,11 +137,22 @@ export default function OnboardingScreen({ onFinish }) {
           useNativeDriver: true,
         }),
       ])
-    ).start();
+    );
+    floatLoop.current.start();
+
+    // 🔧 FIX: Cleanup on unmount
+    return () => {
+      floatLoop.current?.stop();
+    };
   }, []);
 
-  const startAnimations = () => {
-    // Reset
+  // ── SLIDE CHANGE ANIMATION ──────────────────
+  useEffect(() => {
+    startAnimations();
+  }, [currentSlide]);
+
+  const startAnimations = useCallback(() => {
+    // Reset values
     fadeAnim.setValue(0);
     scaleAnim.setValue(0.9);
     slideAnim.setValue(30);
@@ -148,7 +162,7 @@ export default function OnboardingScreen({ onFinish }) {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 400,
+        duration: 380,
         useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
@@ -177,32 +191,34 @@ export default function OnboardingScreen({ onFinish }) {
       duration: 400,
       useNativeDriver: false,
     }).start();
-  };
+  }, [currentSlide]);
 
-  const handleNext = () => {
+  // ── NAVIGATION ──────────────────────────────
+  const handleNext = useCallback(() => {
     if (currentSlide < SLIDES.length - 1) {
       setCurrentSlide(prev => prev + 1);
     } else {
       onFinish();
     }
-  };
+  }, [currentSlide, onFinish]);
 
-  const handlePrev = () => {
+  const handlePrev = useCallback(() => {
     if (currentSlide > 0) {
       setCurrentSlide(prev => prev - 1);
     }
-  };
+  }, [currentSlide]);
 
-  const goToSlide = (index) => {
+  const goToSlide = useCallback((index) => {
     setCurrentSlide(index);
-  };
+  }, []);
 
-  const slide = SLIDES[currentSlide];
+  // ── RENDER ──────────────────────────────────
+  const slide  = SLIDES[currentSlide];
   const isLast = currentSlide === SLIDES.length - 1;
 
   return (
-    <View style={[styles.container,
-      { backgroundColor: slide.bg }]}
+    <View
+      style={[styles.container, { backgroundColor: slide.bg }]}
       {...panResponder.panHandlers}>
 
       <StatusBar
@@ -212,18 +228,16 @@ export default function OnboardingScreen({ onFinish }) {
 
       {/* TOP BAR */}
       <View style={styles.topBar}>
-        {/* BRAND */}
         <Text style={[styles.brand,
           { color: slide.accent }]}>
           ZAVARA
         </Text>
-
-        {/* SKIP */}
         {!isLast && (
           <TouchableOpacity
-            style={[styles.skipBtn,
-              { borderColor: slide.accent + '30',
-                backgroundColor: slide.iconBg }]}
+            style={[styles.skipBtn, {
+              borderColor: slide.accent + '30',
+              backgroundColor: slide.iconBg,
+            }]}
             onPress={onFinish}>
             <Text style={[styles.skipText,
               { color: slide.accent }]}>
@@ -260,16 +274,17 @@ export default function OnboardingScreen({ onFinish }) {
       ]}>
 
         {/* TAG */}
-        <View style={[styles.tagWrap,
-          { backgroundColor: slide.iconBg,
-            borderColor: slide.accent + '25' }]}>
+        <View style={[styles.tagWrap, {
+          backgroundColor: slide.iconBg,
+          borderColor: slide.accent + '25',
+        }]}>
           <Text style={[styles.tagText,
             { color: slide.accent }]}>
             ✦ {slide.tag}
           </Text>
         </View>
 
-        {/* EMOJI */}
+        {/* EMOJI CIRCLE */}
         <Animated.View style={[
           styles.emojiCircle,
           {
@@ -300,7 +315,7 @@ export default function OnboardingScreen({ onFinish }) {
           {slide.title}
         </Text>
 
-        {/* DESC */}
+        {/* DESCRIPTION */}
         <Text style={styles.slideDesc}>
           {slide.desc}
         </Text>
@@ -310,13 +325,17 @@ export default function OnboardingScreen({ onFinish }) {
       {/* BOTTOM SECTION */}
       <View style={styles.bottomSection}>
 
-        {/* DOTS */}
+        {/* DOT INDICATORS */}
         <View style={styles.dotsRow}>
           {SLIDES.map((_, i) => (
             <TouchableOpacity
               key={i}
-              onPress={() => goToSlide(i)}>
-              <Animated.View style={[
+              onPress={() => goToSlide(i)}
+              hitSlop={{
+                top: 8, bottom: 8,
+                left: 4, right: 4,
+              }}>
+              <View style={[
                 styles.dot,
                 i === currentSlide && [
                   styles.dotActive,
@@ -324,7 +343,7 @@ export default function OnboardingScreen({ onFinish }) {
                 ],
                 i < currentSlide && [
                   styles.dotDone,
-                  { backgroundColor: slide.accent + '40' },
+                  { backgroundColor: slide.accent + '45' },
                 ],
               ]} />
             </TouchableOpacity>
@@ -334,12 +353,13 @@ export default function OnboardingScreen({ onFinish }) {
         {/* NAVIGATION BUTTONS */}
         <View style={styles.navBtns}>
 
-          {/* PREV BUTTON */}
+          {/* PREV */}
           {currentSlide > 0 ? (
             <TouchableOpacity
-              style={[styles.prevBtn,
-                { borderColor: slide.accent + '30',
-                  backgroundColor: slide.iconBg }]}
+              style={[styles.prevBtn, {
+                borderColor: slide.accent + '30',
+                backgroundColor: slide.iconBg,
+              }]}
               onPress={handlePrev}>
               <Text style={[styles.prevBtnText,
                 { color: slide.accent }]}>
@@ -350,11 +370,12 @@ export default function OnboardingScreen({ onFinish }) {
             <View style={{ width: 56 }} />
           )}
 
-          {/* NEXT / GET STARTED BUTTON */}
+          {/* NEXT / GET STARTED */}
           <TouchableOpacity
             style={[styles.nextBtn,
               { backgroundColor: slide.accent }]}
-            onPress={handleNext}>
+            onPress={handleNext}
+            activeOpacity={0.85}>
             <Text style={styles.nextBtnText}>
               {isLast ? '🚀 GET STARTED' : 'NEXT →'}
             </Text>
@@ -362,7 +383,7 @@ export default function OnboardingScreen({ onFinish }) {
 
         </View>
 
-        {/* LOGIN LINK - Only on last slide */}
+        {/* LOGIN LINK (last slide only) */}
         {isLast && (
           <TouchableOpacity
             style={styles.loginLink}
@@ -377,7 +398,7 @@ export default function OnboardingScreen({ onFinish }) {
           </TouchableOpacity>
         )}
 
-        {/* SWIPE HINT - Only on first slide */}
+        {/* SWIPE HINT (first slide only) */}
         {currentSlide === 0 && (
           <Text style={styles.swipeHint}>
             ← Swipe to explore →
@@ -395,11 +416,9 @@ export default function OnboardingScreen({ onFinish }) {
 // ============================================
 const styles = StyleSheet.create({
 
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
 
-  // ── TOP BAR ───────────────────────────────
+  // ── TOP BAR ─────────────────────────────────
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -424,7 +443,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // ── PROGRESS BAR ──────────────────────────
+  // ── PROGRESS BAR ────────────────────────────
   progressBarWrap: {
     height: 3,
     backgroundColor: 'rgba(0,0,0,0.06)',
@@ -438,7 +457,7 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
 
-  // ── SLIDE CONTENT ─────────────────────────
+  // ── SLIDE CONTENT ───────────────────────────
   slideContent: {
     flex: 1,
     alignItems: 'center',
@@ -446,13 +465,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
 
-  // ── TAG ───────────────────────────────────
+  // ── TAG ─────────────────────────────────────
   tagWrap: {
     paddingHorizontal: 16,
     paddingVertical: 7,
     borderRadius: borderRadius.round,
     borderWidth: 1,
-    marginBottom: 32,
+    marginBottom: 28,
   },
   tagText: {
     fontSize: 10,
@@ -460,62 +479,62 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
   },
 
-  // ── EMOJI ─────────────────────────────────
+  // ── EMOJI ───────────────────────────────────
   emojiCircle: {
-    width: 160,
-    height: 160,
-    borderRadius: 80,
+    width: 155,
+    height: 155,
+    borderRadius: 78,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 36,
+    marginBottom: 32,
     borderWidth: 2,
     position: 'relative',
   },
   emojiRing: {
     position: 'absolute',
-    width: 190,
-    height: 190,
-    borderRadius: 95,
+    width: 185,
+    height: 185,
+    borderRadius: 93,
     borderWidth: 1,
   },
-  emojiText: {
-    fontSize: 72,
-  },
+  emojiText: { fontSize: 70 },
 
-  // ── TEXT ──────────────────────────────────
+  // ── TEXT ────────────────────────────────────
   slideSubtitle: {
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 3,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   slideTitle: {
-    fontSize: 28,
+    fontSize: 27,
     fontWeight: '900',
     color: colors.textDark,
     textAlign: 'center',
-    marginBottom: 16,
-    lineHeight: 36,
+    marginBottom: 14,
+    lineHeight: 34,
   },
   slideDesc: {
-    fontSize: 15,
+    fontSize: 14,
     color: colors.textLight,
     textAlign: 'center',
-    lineHeight: 24,
+    lineHeight: 23,
+    paddingHorizontal: 4,
   },
 
-  // ── BOTTOM ────────────────────────────────
+  // ── BOTTOM ──────────────────────────────────
   bottomSection: {
     paddingHorizontal: 28,
-    paddingBottom: 48,
+    paddingBottom: 44,
     alignItems: 'center',
   },
 
-  // ── DOTS ──────────────────────────────────
+  // ── DOTS ────────────────────────────────────
   dotsRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 28,
+    marginBottom: 26,
+    alignItems: 'center',
   },
   dot: {
     width: 8,
@@ -534,7 +553,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
 
-  // ── NAV BUTTONS ───────────────────────────
+  // ── NAV BUTTONS ─────────────────────────────
   navBtns: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -566,23 +585,22 @@ const styles = StyleSheet.create({
     color: colors.textWhite,
     fontSize: 14,
     fontWeight: '900',
-    letterSpacing: 1,
+    letterSpacing: 0.8,
   },
 
-  // ── LOGIN LINK ────────────────────────────
+  // ── LOGIN LINK ──────────────────────────────
   loginLink: {
     paddingVertical: 8,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   loginLinkText: {
     color: colors.textLight,
     fontSize: 13,
+    textAlign: 'center',
   },
-  loginLinkBold: {
-    fontWeight: '900',
-  },
+  loginLinkBold: { fontWeight: '900' },
 
-  // ── SWIPE HINT ────────────────────────────
+  // ── SWIPE HINT ──────────────────────────────
   swipeHint: {
     color: colors.textMuted,
     fontSize: 11,

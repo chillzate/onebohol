@@ -706,19 +706,37 @@ def get_products(
     user = db.query(User).filter(
         User.id == user_id
     ).first()
+
     if not user:
         raise HTTPException(
             status_code=404,
             detail="User not found"
         )
-    if user.role not in ["producer", "seller", "admin"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied."
-        )
-    return db.query(Product).filter(
-        Product.is_available == True
-    ).all()
+
+    # Admin sees everything
+    if user.role == "admin":
+        return db.query(Product).filter(
+            Product.is_available == True
+        ).all()
+
+    # Regular sees RETAIL only
+    if user.role == "regular":
+        return db.query(Product).filter(
+            Product.is_available == True,
+            Product.market_type == "retail"
+        ).all()
+
+    # Seller & Producer see WHOLESALE
+    if user.role in ["seller", "producer"]:
+        return db.query(Product).filter(
+            Product.is_available == True,
+            Product.market_type == "wholesale"
+        ).all()
+
+    raise HTTPException(
+        status_code=403,
+        detail="Access denied."
+    )
 
 @app.delete("/products/{product_id}")
 def delete_product(

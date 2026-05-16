@@ -1,4 +1,13 @@
-import { useEffect, useState } from 'react';
+// ============================================
+// ZAVARA ORDER HISTORY SCREEN - v3.0
+// ============================================
+import {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+} from 'react';
 import {
   View,
   Text,
@@ -10,6 +19,11 @@ import {
   RefreshControl,
   Modal,
   TextInput,
+  Alert,
+  Animated,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
 } from 'react-native';
 import axios from 'axios';
 import {
@@ -20,335 +34,731 @@ import {
   borderRadius,
 } from '../theme';
 import { showToast } from './ToastManager';
+import { API_URL } from '../config';
 
-const API_URL = 'https://onebohol-production.up.railway.app';
+// ============================================
+// CONSTANTS (outside component = no re-creation)
+// ============================================
+const FILTERS = [
+  'All', 'Pending', 'Confirmed',
+  'Preparing', 'Delivering',
+  'Delivered', 'Cancelled',
+];
 
-export default function OrderHistoryScreen({
-  userId,
-  onBack,
+const STATUS_CONFIG = {
+  pending: {
+    color:  colors.warning,
+    bg:     colors.warningPale,
+    border: colors.warning + '25',
+    icon:   '⏳',
+    label:  'PENDING',
+  },
+  confirmed: {
+    color:  colors.riderColor,
+    bg:     colors.riderBg,
+    border: colors.riderBorder,
+    icon:   '✅',
+    label:  'CONFIRMED',
+  },
+  preparing: {
+    color:  colors.cuisineColor,
+    bg:     colors.cuisineBg,
+    border: colors.cuisineBorder,
+    icon:   '👨‍🍳',
+    label:  'PREPARING',
+  },
+  delivering: {
+    color:  colors.primary,
+    bg:     colors.primaryPale,
+    border: colors.borderGold,
+    icon:   '🛵',
+    label:  'ON THE WAY',
+  },
+  delivered: {
+    color:  colors.success,
+    bg:     colors.successPale,
+    border: colors.success + '25',
+    icon:   '🎉',
+    label:  'DELIVERED',
+  },
+  cancelled: {
+    color:  colors.danger,
+    bg:     colors.dangerPale,
+    border: colors.danger + '25',
+    icon:   '❌',
+    label:  'CANCELLED',
+  },
+  ready: {
+    color:  colors.farmerColor,
+    bg:     colors.farmerBg,
+    border: colors.farmerBorder,
+    icon:   '📦',
+    label:  'READY',
+  },
+};
+
+const TRACKER_STEPS = [
+  { key: 'pending',    icon: '📝', label: 'Ordered'   },
+  { key: 'confirmed',  icon: '✅', label: 'Confirmed'  },
+  { key: 'preparing',  icon: '👨‍🍳', label: 'Cooking'   },
+  { key: 'delivering', icon: '🛵', label: 'On Way'     },
+  { key: 'delivered',  icon: '🎉', label: 'Done'       },
+];
+
+const STATUS_ORDER = [
+  'pending', 'confirmed',
+  'preparing', 'delivering', 'delivered',
+];
+
+const RATING_LABELS = {
+  1: 'Poor 😞',
+  2: 'Fair 😐',
+  3: 'Good 🙂',
+  4: 'Great 😊',
+  5: 'Excellent! 🤩',
+};
+
+const QUICK_TAGS = [
+  '😋 Delicious',
+  '🚀 Fast Delivery',
+  '📦 Good Packaging',
+  '💰 Worth the Price',
+  '🌟 Will Order Again',
+  '🤝 Great Service',
+];
+
+// ============================================
+// REVIEW MODAL - separate component
+// ← Prevents keyboard dismiss bug
+// ============================================
+function ReviewModal({
+  visible,
+  order,
+  onClose,
+  onSubmit,
+  submitting,
 }) {
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [selectedFilter, setSelectedFilter] = useState('All');
-
-  // ── REVIEW STATES ─────────────────────────
-  const [showReview, setShowReview] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState(null);
-  const [rating, setRating] = useState(0);
+  const [rating, setRating]   = useState(0);
   const [comment, setComment] = useState('');
-  const [submitting, setSubmitting] = useState(false);
 
-  const filters = [
-    'All', 'Pending', 'Confirmed',
-    'Preparing', 'Delivering',
-    'Delivered', 'Cancelled',
-  ];
-
-  const statusConfig = {
-    pending: {
-      color: colors.warning,
-      bg: colors.warningPale,
-      border: colors.warning + '25',
-      icon: '⏳',
-      label: 'PENDING',
-    },
-    confirmed: {
-      color: colors.riderColor,
-      bg: colors.riderBg,
-      border: colors.riderBorder,
-      icon: '✅',
-      label: 'CONFIRMED',
-    },
-    preparing: {
-      color: colors.cuisineColor,
-      bg: colors.cuisineBg,
-      border: colors.cuisineBorder,
-      icon: '👨‍🍳',
-      label: 'PREPARING',
-    },
-    delivering: {
-      color: colors.primary,
-      bg: colors.primaryPale,
-      border: colors.borderGold,
-      icon: '🛵',
-      label: 'ON THE WAY',
-    },
-    delivered: {
-      color: colors.success,
-      bg: colors.successPale,
-      border: colors.success + '25',
-      icon: '🎉',
-      label: 'DELIVERED',
-    },
-    cancelled: {
-      color: colors.danger,
-      bg: colors.dangerPale,
-      border: colors.danger + '25',
-      icon: '❌',
-      label: 'CANCELLED',
-    },
-  };
-
-  useEffect(() => { fetchOrders(); }, []);
-
-  const fetchOrders = async () => {
-    setLoading(true);
-    try {
-      const response = await axios.get(
-        `${API_URL}/orders/user/${userId}`
-      );
-      const sorted = response.data.sort(
-        (a, b) =>
-          new Date(b.created_at) - new Date(a.created_at)
-      );
-      setOrders(sorted);
-    } catch {
-      setOrders([]);
+  // Reset when modal opens
+  useEffect(() => {
+    if (visible) {
+      setRating(0);
+      setComment('');
     }
-    setLoading(false);
-  };
+  }, [visible]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchOrders();
-    setRefreshing(false);
-  };
+  const toggleTag = useCallback((tag) => {
+    setComment(prev =>
+      prev.includes(tag)
+        ? prev.replace(tag, '').trim()
+        : prev ? `${prev} ${tag}` : tag
+    );
+  }, []);
 
-  // ── SUBMIT REVIEW ─────────────────────────
-  const handleSubmitReview = async () => {
+  const handleSubmit = () => {
     if (rating === 0) {
       showToast('warning', 'Select Rating',
         'Please select a star rating!');
       return;
     }
-    setSubmitting(true);
-    try {
-      await axios.post(
-        `${API_URL}/reviews`,
-        null,
-        {
-          params: {
-            user_id: userId,
-            rating: rating,
-            comment: comment,
-            order_id: selectedOrder?.id,
-            restaurant_id: selectedOrder?.restaurant_id,
-          }
-        }
-      );
-      showToast('success', 'Review Submitted! ⭐',
-        'Thank you for your feedback!');
-      setShowReview(false);
-      setRating(0);
-      setComment('');
-      setSelectedOrder(null);
-    } catch (error) {
-      if (error.response?.status === 400) {
-        showToast('warning', 'Already Reviewed!',
-          'You already reviewed this order.');
-      } else {
-        showToast('error', 'Error',
-          'Could not submit review.');
-      }
-    }
-    setSubmitting(false);
+    onSubmit({ rating, comment });
   };
 
-  const getRatingLabel = () => {
-    const labels = {
-      1: 'Poor 😞',
-      2: 'Fair 😐',
-      3: 'Good 🙂',
-      4: 'Great 😊',
-      5: 'Excellent! 🤩',
-    };
-    return labels[rating] || 'Tap to rate';
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHandle} />
+
+            {/* Title */}
+            <Text style={styles.modalTitle}>
+              Rate Your Order
+            </Text>
+            <Text style={styles.modalSub}>
+              Order #{String(order?.id || 0).padStart(4, '0')}
+            </Text>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled">
+
+              {/* STARS */}
+              <View style={styles.starsRow}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <TouchableOpacity
+                    key={star}
+                    onPress={() => setRating(star)}
+                    style={styles.starBtn}
+                    activeOpacity={0.7}>
+                    <Animated.Text style={[
+                      styles.starIcon,
+                      star <= rating && styles.starActive,
+                    ]}>
+                      {star <= rating ? '⭐' : '☆'}
+                    </Animated.Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Rating label */}
+              <Text style={styles.ratingLabel}>
+                {rating > 0
+                  ? RATING_LABELS[rating]
+                  : 'Tap a star to rate'}
+              </Text>
+
+              {/* Quick tags */}
+              <Text style={styles.tagsTitle}>
+                QUICK FEEDBACK
+              </Text>
+              <View style={styles.tagsRow}>
+                {QUICK_TAGS.map((tag) => (
+                  <TouchableOpacity
+                    key={tag}
+                    style={[
+                      styles.tag,
+                      comment.includes(tag) && styles.tagActive,
+                    ]}
+                    onPress={() => toggleTag(tag)}
+                    activeOpacity={0.8}>
+                    <Text style={[
+                      styles.tagText,
+                      comment.includes(tag) &&
+                      styles.tagTextActive,
+                    ]}>
+                      {tag}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Comment input */}
+              <Text style={styles.tagsTitle}>
+                ADDITIONAL COMMENTS
+              </Text>
+              <TextInput
+                style={styles.commentInput}
+                placeholder="Share more about your experience..."
+                placeholderTextColor={colors.textMuted}
+                value={comment}
+                onChangeText={setComment}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+
+              {/* Buttons */}
+              <View style={styles.modalBtns}>
+                <TouchableOpacity
+                  style={styles.skipBtn}
+                  onPress={onClose}
+                  activeOpacity={0.8}>
+                  <Text style={styles.skipBtnText}>
+                    Maybe Later
+                  </Text>
+                </TouchableOpacity>
+
+                {submitting ? (
+                  <View style={[styles.submitBtn,
+                    { justifyContent: 'center' }]}>
+                    <ActivityIndicator color="#FFF" />
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      styles.submitBtn,
+                      rating === 0 && styles.submitBtnDisabled,
+                    ]}
+                    onPress={handleSubmit}
+                    disabled={rating === 0}
+                    activeOpacity={0.85}>
+                    <Text style={styles.submitBtnText}>
+                      ⭐ Submit Review
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <View style={{ height: 16 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ============================================
+// ORDER CARD - separate component
+// ← Prevents full list re-render on expand
+// ============================================
+function OrderCard({
+  item,
+  isExpanded,
+  onToggle,
+  onCancel,
+  onReview,
+}) {
+  const animHeight = useRef(new Animated.Value(0)).current;
+
+  const status       = STATUS_CONFIG[item.status?.toLowerCase()] || {
+    color:  colors.textLight,
+    bg:     colors.inputBackground,
+    border: colors.border,
+    icon:   '❓',
+    label:  (item.status || 'UNKNOWN').toUpperCase(),
   };
 
-  const filteredOrders = selectedFilter === 'All'
-    ? orders
-    : orders.filter(
-        o => o.status?.toLowerCase() ===
-        selectedFilter.toLowerCase()
-      );
-
-  const getStatus = (status) =>
-    statusConfig[status?.toLowerCase()] || {
-      color: colors.textLight,
-      bg: colors.inputBackground,
-      border: colors.border,
-      icon: '❓',
-      label: status?.toUpperCase() || 'UNKNOWN',
-    };
+  const currentIndex = STATUS_ORDER.indexOf(
+    item.status?.toLowerCase()
+  );
+  const isCancelled  = item.status?.toLowerCase() === 'cancelled';
+  const isDelivered  = item.status?.toLowerCase() === 'delivered';
+  const isPending    = item.status?.toLowerCase() === 'pending';
+  const orderTotal   = item.grand_total || item.total_price || 0;
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-PH', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    try {
+      return new Date(dateString).toLocaleDateString('en-PH', {
+        month:  'short',
+        day:    'numeric',
+        year:   'numeric',
+        hour:   '2-digit',
+        minute: '2-digit',
+      });
+    } catch { return 'N/A'; }
   };
 
-  const totalOrders = orders.length;
-  const totalSpent = orders
-    .filter(o => o.status !== 'cancelled')
-    .reduce((sum, o) => sum + (o.total_price || 0), 0);
-  const deliveredCount = orders.filter(
-    o => o.status === 'delivered'
-  ).length;
+  return (
+    <View style={styles.orderCard}>
 
-  const TRACKER_STEPS = [
-    { key: 'pending',    icon: '📝', label: 'Ordered'  },
-    { key: 'confirmed',  icon: '✅', label: 'Confirmed' },
-    { key: 'preparing',  icon: '👨‍🍳', label: 'Cooking'  },
-    { key: 'delivering', icon: '🛵', label: 'Delivery'  },
-    { key: 'delivered',  icon: '🎉', label: 'Done'      },
-  ];
+      {/* ── ALWAYS VISIBLE TOP ── */}
+      <TouchableOpacity
+        style={styles.orderCardTop}
+        onPress={onToggle}
+        activeOpacity={0.85}>
 
-  const STATUS_ORDER = [
-    'pending', 'confirmed',
-    'preparing', 'delivering', 'delivered',
-  ];
-
-  // ============================================
-  // REVIEW MODAL
-  // ============================================
-  const ReviewModal = () => (
-    <Modal
-      visible={showReview}
-      transparent
-      animationType="slide"
-      onRequestClose={() => setShowReview(false)}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-
-          {/* HANDLE */}
-          <View style={styles.modalHandle} />
-
-          {/* TITLE */}
-          <Text style={styles.modalTitle}>
-            Rate Your Order
-          </Text>
-          <Text style={styles.modalSub}>
-            Order #{selectedOrder?.id
-              .toString().padStart(4, '0')}
-          </Text>
-
-          {/* STARS */}
-          <View style={styles.starsRow}>
-            {[1, 2, 3, 4, 5].map((star) => (
-              <TouchableOpacity
-                key={star}
-                onPress={() => setRating(star)}
-                style={styles.starBtn}>
-                <Text style={[
-                  styles.starIcon,
-                  star <= rating && styles.starActive,
-                ]}>
-                  {star <= rating ? '⭐' : '☆'}
-                </Text>
-              </TouchableOpacity>
-            ))}
+        <View style={styles.orderCardTopLeft}>
+          {/* Order type pill */}
+          <View style={[styles.orderTypePill, {
+            backgroundColor: item.order_type === 'food'
+              ? colors.cuisineBg : colors.farmerBg,
+          }]}>
+            <Text style={[styles.orderTypePillText, {
+              color: item.order_type === 'food'
+                ? colors.cuisineColor : colors.farmerColor,
+            }]}>
+              {item.order_type === 'food'
+                ? '🍴 Food' : '🌾 Market'}
+            </Text>
           </View>
 
-          {/* RATING LABEL */}
-          <Text style={styles.ratingLabel}>
-            {getRatingLabel()}
+          <Text style={styles.orderId}>
+            #{String(item.id).padStart(4, '0')}
           </Text>
+          <Text style={styles.orderDate}>
+            {formatDate(item.created_at)}
+          </Text>
+        </View>
 
-          {/* QUICK TAGS */}
-          <View style={styles.tagsRow}>
-            {[
-              '😋 Delicious',
-              '🚀 Fast',
-              '📦 Good Packaging',
-              '💰 Worth it',
-            ].map((tag) => (
-              <TouchableOpacity
-                key={tag}
-                style={[
-                  styles.tag,
-                  comment.includes(tag) &&
-                  styles.tagActive,
-                ]}
-                onPress={() => {
-                  if (comment.includes(tag)) {
-                    setComment(
-                      comment.replace(tag, '').trim()
-                    );
-                  } else {
-                    setComment(
-                      comment
-                        ? `${comment} ${tag}`
-                        : tag
-                    );
-                  }
-                }}>
-                <Text style={[
-                  styles.tagText,
-                  comment.includes(tag) &&
-                  styles.tagTextActive,
-                ]}>
-                  {tag}
-                </Text>
-              </TouchableOpacity>
-            ))}
+        <View style={styles.orderCardTopRight}>
+          {/* Status badge */}
+          <View style={[styles.statusBadge, {
+            backgroundColor: status.bg,
+            borderColor:     status.border,
+          }]}>
+            <Text style={styles.statusIcon}>
+              {status.icon}
+            </Text>
+            <Text style={[styles.statusText,
+              { color: status.color }]}>
+              {status.label}
+            </Text>
           </View>
 
-          {/* COMMENT */}
-          <TextInput
-            style={styles.commentInput}
-            placeholder="Share your experience..."
-            placeholderTextColor={colors.textMuted}
-            value={comment}
-            onChangeText={setComment}
-            multiline
-            numberOfLines={3}
-          />
+          {/* Total + expand */}
+          <View style={styles.totalExpandRow}>
+            <Text style={styles.cardTotal}>
+              ₱{orderTotal.toFixed(2)}
+            </Text>
+            <Text style={styles.expandIcon}>
+              {isExpanded ? '▲' : '▼'}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
 
-          {/* BUTTONS */}
-          <View style={styles.modalBtns}>
-            <TouchableOpacity
-              style={styles.skipBtn}
-              onPress={() => {
-                setShowReview(false);
-                setRating(0);
-                setComment('');
-              }}>
-              <Text style={styles.skipBtnText}>
-                Skip
-              </Text>
-            </TouchableOpacity>
+      {/* ── EXPANDED SECTION ── */}
+      {isExpanded && (
+        <View>
+          <View style={styles.cardDivider} />
 
-            {submitting ? (
-              <ActivityIndicator
-                color={colors.primary}
-                style={{ flex: 2 }}
-              />
-            ) : (
-              <TouchableOpacity
-                style={[
-                  styles.submitBtn,
-                  rating === 0 &&
-                  styles.submitBtnDisabled,
-                ]}
-                onPress={handleSubmitReview}
-                disabled={rating === 0}>
-                <Text style={styles.submitBtnText}>
-                  ⭐ Submit Review
+          {/* Details */}
+          <View style={styles.orderDetails}>
+
+            {/* Quantity */}
+            <View style={styles.detailRow}>
+              <View style={styles.detailIconWrap}>
+                <Text style={styles.detailIcon}>📦</Text>
+              </View>
+              <View style={styles.detailInfo}>
+                <Text style={styles.detailLabel}>QUANTITY</Text>
+                <Text style={styles.detailValue}>
+                  {item.quantity}{' '}
+                  {item.quantity === 1 ? 'item' : 'items'}
                 </Text>
-              </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Product name if available */}
+            {item.product_name && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailIconWrap}>
+                  <Text style={styles.detailIcon}>🏷️</Text>
+                </View>
+                <View style={styles.detailInfo}>
+                  <Text style={styles.detailLabel}>PRODUCT</Text>
+                  <Text style={styles.detailValue}>
+                    {item.product_name}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Delivery address */}
+            {item.delivery_address && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailIconWrap}>
+                  <Text style={styles.detailIcon}>📍</Text>
+                </View>
+                <View style={styles.detailInfo}>
+                  <Text style={styles.detailLabel}>
+                    DELIVERY ADDRESS
+                  </Text>
+                  <Text style={styles.detailValue}>
+                    {item.delivery_address}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Payment */}
+            {item.payment_method && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailIconWrap}>
+                  <Text style={styles.detailIcon}>💳</Text>
+                </View>
+                <View style={styles.detailInfo}>
+                  <Text style={styles.detailLabel}>PAYMENT</Text>
+                  <Text style={styles.detailValue}>
+                    {item.payment_method === 'cod'
+                      ? '💵 Cash on Delivery'
+                      : '📱 GCash'}
+                    {' · '}
+                    <Text style={{
+                      color: item.payment_status === 'paid'
+                        ? colors.success : colors.warning,
+                      fontWeight: '800',
+                    }}>
+                      {(item.payment_status || 'UNPAID')
+                        .toUpperCase()}
+                    </Text>
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Seller / Restaurant */}
+            {(item.seller_name || item.restaurant_name) && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailIconWrap}>
+                  <Text style={styles.detailIcon}>🏪</Text>
+                </View>
+                <View style={styles.detailInfo}>
+                  <Text style={styles.detailLabel}>FROM</Text>
+                  <Text style={styles.detailValue}>
+                    {item.seller_name || item.restaurant_name}
+                  </Text>
+                </View>
+              </View>
             )}
           </View>
 
+          {/* Total */}
+          <View style={styles.totalRow}>
+            <Text style={styles.totalLabel}>TOTAL AMOUNT</Text>
+            <Text style={styles.totalValue}>
+              ₱{orderTotal.toFixed(2)}
+            </Text>
+          </View>
+
+          {/* Tracker */}
+          {!isCancelled && (
+            <View style={styles.trackerWrap}>
+              <Text style={styles.trackerTitle}>
+                ORDER PROGRESS
+              </Text>
+              <View style={styles.tracker}>
+                {TRACKER_STEPS.map((step, index) => {
+                  const isDone   = index <= currentIndex;
+                  const isActive = index === currentIndex;
+                  const isLast   = index === TRACKER_STEPS.length - 1;
+                  return (
+                    <View key={step.key} style={styles.trackerStep}>
+                      {/* Connector line */}
+                      {!isLast && (
+                        <View style={[
+                          styles.trackerLine,
+                          isDone && index < currentIndex &&
+                          styles.trackerLineDone,
+                        ]} />
+                      )}
+                      {/* Dot */}
+                      <View style={[
+                        styles.trackerDot,
+                        isDone   && styles.trackerDotDone,
+                        isActive && styles.trackerDotActive,
+                      ]}>
+                        <Text style={styles.trackerDotIcon}>
+                          {step.icon}
+                        </Text>
+                      </View>
+                      <Text style={[
+                        styles.trackerLabel,
+                        isDone && styles.trackerLabelDone,
+                      ]}>
+                        {step.label}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {/* Cancelled banner */}
+          {isCancelled && (
+            <View style={styles.cancelledBanner}>
+              <Text style={styles.cancelledIcon}>❌</Text>
+              <View>
+                <Text style={styles.cancelledTitle}>
+                  Order Cancelled
+                </Text>
+                <Text style={styles.cancelledSub}>
+                  This order was cancelled
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Action buttons */}
+          {(isPending || isDelivered) && (
+            <View style={styles.actionBtns}>
+              {isPending && (
+                <TouchableOpacity
+                  style={styles.cancelOrderBtn}
+                  onPress={onCancel}
+                  activeOpacity={0.8}>
+                  <Text style={styles.cancelOrderBtnText}>
+                    ❌ Cancel Order
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {isDelivered && (
+                <TouchableOpacity
+                  style={styles.reviewBtn}
+                  onPress={onReview}
+                  activeOpacity={0.8}>
+                  <Text style={styles.reviewBtnText}>
+                    ⭐ Rate This Order
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
-      </View>
-    </Modal>
+      )}
+    </View>
+  );
+}
+
+// ============================================
+// MAIN SCREEN
+// ============================================
+export default function OrderHistoryScreen({
+  userId,
+  onBack,
+}) {
+  const [orders, setOrders]               = useState([]);
+  const [loading, setLoading]             = useState(true);
+  const [refreshing, setRefreshing]       = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState('All');
+  const [expandedId, setExpandedId]       = useState(null);
+
+  // Review states
+  const [showReview, setShowReview]       = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [submitting, setSubmitting]       = useState(false);
+
+  // ── FETCH ORDERS ─────────────────────────────
+  const fetchOrders = useCallback(async () => {
+    try {
+      const response = await axios.get(
+        `${API_URL}/orders/user/${userId}`,
+        { timeout: 10000 }
+      );
+      const sorted = (response.data || []).sort(
+        (a, b) =>
+          new Date(b.created_at) - new Date(a.created_at)
+      );
+      setOrders(sorted);
+    } catch (err) {
+      console.log('Orders error:', err?.message);
+      setOrders([]);
+      showToast('error', 'Could not load orders',
+        'Pull down to retry');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [userId]);
+
+  useEffect(() => { fetchOrders(); }, []);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchOrders();
+  }, [fetchOrders]);
+
+  // ── CANCEL ORDER ─────────────────────────────
+  const handleCancelOrder = useCallback((order) => {
+    Alert.alert(
+      'Cancel Order',
+      `Cancel Order #${String(order.id).padStart(4, '0')}?\n\nThis cannot be undone.`,
+      [
+        { text: 'Keep Order', style: 'cancel' },
+        {
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await axios.patch(
+                `${API_URL}/orders/${order.id}/status` +
+                `?new_status=cancelled`
+              );
+              showToast('info', 'Order Cancelled',
+                'Your order has been cancelled.');
+              fetchOrders();
+            } catch {
+              showToast('error', 'Error',
+                'Could not cancel. Try again.');
+            }
+          },
+        },
+      ]
+    );
+  }, [fetchOrders]);
+
+  // ── SUBMIT REVIEW ────────────────────────────
+  const handleSubmitReview = useCallback(async ({ rating, comment }) => {
+    setSubmitting(true);
+    try {
+      const params = new URLSearchParams({
+        user_id:  userId,
+        rating:   rating,
+        order_id: selectedOrder?.id,
+      });
+      if (comment) params.append('comment', comment);
+
+      await axios.post(
+        `${API_URL}/reviews?${params.toString()}`
+      );
+
+      showToast('success', 'Review Submitted! ⭐',
+        'Thank you for your feedback!');
+      setShowReview(false);
+      setSelectedOrder(null);
+    } catch (error) {
+      if (error.response?.status === 400) {
+        showToast('warning', 'Already Reviewed! ⚠️',
+          'You already reviewed this order.');
+        setShowReview(false);
+      } else {
+        showToast('error', 'Error',
+          'Could not submit review. Try again.');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }, [userId, selectedOrder]);
+
+  // ── STATS (memoized) ─────────────────────────
+  const stats = useMemo(() => {
+    const totalOrders    = orders.length;
+    const deliveredCount = orders.filter(
+      o => o.status?.toLowerCase() === 'delivered'
+    ).length;
+    const pendingCount   = orders.filter(
+      o => o.status?.toLowerCase() === 'pending'
+    ).length;
+    const totalSpent     = orders
+      .filter(o => o.status?.toLowerCase() !== 'cancelled')
+      .reduce((sum, o) =>
+        sum + (o.grand_total || o.total_price || 0), 0
+      );
+    return { totalOrders, deliveredCount, pendingCount, totalSpent };
+  }, [orders]);
+
+  // ── FILTERED ORDERS (memoized) ───────────────
+  const filteredOrders = useMemo(() =>
+    selectedFilter === 'All'
+      ? orders
+      : orders.filter(
+          o => o.status?.toLowerCase() ===
+          selectedFilter.toLowerCase()
+        ),
+    [orders, selectedFilter]
+  );
+
+  // ── FILTER COUNTS (memoized) ─────────────────
+  const filterCounts = useMemo(() => {
+    const counts = { All: orders.length };
+    FILTERS.slice(1).forEach(f => {
+      counts[f] = orders.filter(
+        o => o.status?.toLowerCase() === f.toLowerCase()
+      ).length;
+    });
+    return counts;
+  }, [orders]);
+
+  // ── RENDER ITEM ──────────────────────────────
+  const renderOrder = useCallback(({ item }) => (
+    <OrderCard
+      item={item}
+      isExpanded={expandedId === item.id}
+      onToggle={() => setExpandedId(
+        expandedId === item.id ? null : item.id
+      )}
+      onCancel={() => handleCancelOrder(item)}
+      onReview={() => {
+        setSelectedOrder(item);
+        setShowReview(true);
+      }}
+    />
+  ), [expandedId, handleCancelOrder]);
+
+  const keyExtractor = useCallback(
+    (item) => item.id.toString(), []
   );
 
   // ============================================
@@ -367,26 +777,23 @@ export default function OrderHistoryScreen({
             onPress={onBack}>
             <Text style={styles.headerBackText}>←</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            My Orders
-          </Text>
+          <Text style={styles.headerTitle}>My Orders</Text>
           <View style={{ width: 38 }} />
         </View>
         <View style={styles.emptyWrap}>
           <View style={styles.emptyCircle}>
             <Text style={styles.emptyEmoji}>📦</Text>
           </View>
-          <Text style={styles.emptyTitle}>
-            No Orders Yet
-          </Text>
+          <Text style={styles.emptyTitle}>No Orders Yet</Text>
           <Text style={styles.emptySub}>
             Your order history will{'\n'}appear here
           </Text>
           <TouchableOpacity
             style={styles.emptyBtn}
-            onPress={onBack}>
+            onPress={onBack}
+            activeOpacity={0.85}>
             <Text style={styles.emptyBtnText}>
-              Order Now →
+              Start Ordering →
             </Text>
           </TouchableOpacity>
         </View>
@@ -395,7 +802,7 @@ export default function OrderHistoryScreen({
   }
 
   // ============================================
-  // MAIN SCREEN
+  // MAIN RENDER
   // ============================================
   return (
     <View style={styles.container}>
@@ -405,19 +812,42 @@ export default function OrderHistoryScreen({
       />
 
       {/* REVIEW MODAL */}
-      <ReviewModal />
+      <ReviewModal
+        visible={showReview}
+        order={selectedOrder}
+        onClose={() => {
+          setShowReview(false);
+          setSelectedOrder(null);
+        }}
+        onSubmit={handleSubmitReview}
+        submitting={submitting}
+      />
 
       {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerBackBtn}
-          onPress={onBack}>
+          onPress={onBack}
+          activeOpacity={0.8}>
           <Text style={styles.headerBackText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>My Orders</Text>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>My Orders</Text>
+          {stats.pendingCount > 0 && (
+            <View style={styles.headerBadge}>
+              <Text style={styles.headerBadgeText}>
+                {stats.pendingCount} pending
+              </Text>
+            </View>
+          )}
+        </View>
         <TouchableOpacity
           style={styles.refreshBtn}
-          onPress={fetchOrders}>
+          onPress={() => {
+            setLoading(true);
+            fetchOrders();
+          }}
+          activeOpacity={0.8}>
           <Text style={styles.refreshBtnText}>↻</Text>
         </TouchableOpacity>
       </View>
@@ -425,22 +855,27 @@ export default function OrderHistoryScreen({
       {/* STATS BANNER */}
       <View style={styles.statsBanner}>
         <View style={styles.statItem}>
+          <Text style={styles.statEmoji}>📦</Text>
           <Text style={styles.statValue}>
-            {totalOrders}
+            {stats.totalOrders}
           </Text>
           <Text style={styles.statLabel}>Total</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
+          <Text style={styles.statEmoji}>🎉</Text>
           <Text style={styles.statValue}>
-            {deliveredCount}
+            {stats.deliveredCount}
           </Text>
           <Text style={styles.statLabel}>Delivered</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
+          <Text style={styles.statEmoji}>💰</Text>
           <Text style={styles.statValue}>
-            ₱{totalSpent.toFixed(0)}
+            ₱{stats.totalSpent >= 1000
+              ? `${(stats.totalSpent / 1000).toFixed(1)}k`
+              : stats.totalSpent.toFixed(0)}
           </Text>
           <Text style={styles.statLabel}>Spent</Text>
         </View>
@@ -451,26 +886,43 @@ export default function OrderHistoryScreen({
         <FlatList
           horizontal
           showsHorizontalScrollIndicator={false}
-          data={filters}
+          data={FILTERS}
           keyExtractor={(item) => item}
           contentContainerStyle={styles.filterList}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[
-                styles.filterChip,
-                selectedFilter === item &&
-                styles.filterChipActive,
-              ]}
-              onPress={() => setSelectedFilter(item)}>
-              <Text style={[
-                styles.filterChipText,
-                selectedFilter === item &&
-                styles.filterChipTextActive,
-              ]}>
-                {item}
-              </Text>
-            </TouchableOpacity>
-          )}
+          renderItem={({ item }) => {
+            const isActive = selectedFilter === item;
+            const count    = filterCounts[item] || 0;
+            return (
+              <TouchableOpacity
+                style={[
+                  styles.filterChip,
+                  isActive && styles.filterChipActive,
+                ]}
+                onPress={() => setSelectedFilter(item)}
+                activeOpacity={0.8}>
+                <Text style={[
+                  styles.filterChipText,
+                  isActive && styles.filterChipTextActive,
+                ]}>
+                  {item}
+                </Text>
+                {/* Count badge on each filter */}
+                {count > 0 && item !== 'All' && (
+                  <View style={[
+                    styles.filterBadge,
+                    isActive && styles.filterBadgeActive,
+                  ]}>
+                    <Text style={[
+                      styles.filterBadgeText,
+                      isActive && styles.filterBadgeTextActive,
+                    ]}>
+                      {count}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          }}
         />
       </View>
 
@@ -488,7 +940,8 @@ export default function OrderHistoryScreen({
       ) : (
         <FlatList
           data={filteredOrders}
-          keyExtractor={(item) => item.id.toString()}
+          keyExtractor={keyExtractor}
+          renderItem={renderOrder}
           contentContainerStyle={styles.orderList}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -501,220 +954,18 @@ export default function OrderHistoryScreen({
           }
           ListEmptyComponent={
             <View style={styles.emptyFilterWrap}>
-              <Text style={styles.emptyFilterIcon}>
-                🔍
+              <Text style={styles.emptyFilterEmoji}>🔍</Text>
+              <Text style={styles.emptyFilterTitle}>
+                No {selectedFilter} Orders
               </Text>
-              <Text style={styles.emptyFilterText}>
-                No {selectedFilter} orders
+              <Text style={styles.emptyFilterSub}>
+                You have no{' '}
+                {selectedFilter.toLowerCase()} orders yet
               </Text>
             </View>
           }
-          renderItem={({ item }) => {
-            const status = getStatus(item.status);
-            const currentIndex = STATUS_ORDER.indexOf(
-              item.status?.toLowerCase()
-            );
-            const isCancelled =
-              item.status === 'cancelled';
-            const isDelivered =
-              item.status === 'delivered';
-
-            return (
-              <View style={styles.orderCard}>
-
-                {/* TOP ROW */}
-                <View style={styles.orderCardTop}>
-                  <View>
-                    <Text style={styles.orderIdLabel}>
-                      ORDER
-                    </Text>
-                    <Text style={styles.orderId}>
-                      #{item.id.toString().padStart(4,'0')}
-                    </Text>
-                  </View>
-                  <View style={[
-                    styles.statusBadge,
-                    {
-                      backgroundColor: status.bg,
-                      borderColor: status.border,
-                    },
-                  ]}>
-                    <Text style={styles.statusIcon}>
-                      {status.icon}
-                    </Text>
-                    <Text style={[
-                      styles.statusText,
-                      { color: status.color },
-                    ]}>
-                      {status.label}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* DIVIDER */}
-                <View style={styles.cardDivider} />
-
-                {/* ORDER DETAILS */}
-                <View style={styles.orderDetails}>
-                  <View style={styles.detailRow}>
-                    <View style={styles.detailIconWrap}>
-                      <Text style={styles.detailIcon}>
-                        🍽️
-                      </Text>
-                    </View>
-                    <View style={styles.detailInfo}>
-                      <Text style={styles.detailLabel}>
-                        ORDER TYPE
-                      </Text>
-                      <Text style={styles.detailValue}>
-                        {item.order_type === 'food'
-                          ? '🍴 Food Delivery'
-                          : '🌾 Market Order'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <View style={styles.detailIconWrap}>
-                      <Text style={styles.detailIcon}>
-                        📦
-                      </Text>
-                    </View>
-                    <View style={styles.detailInfo}>
-                      <Text style={styles.detailLabel}>
-                        QUANTITY
-                      </Text>
-                      <Text style={styles.detailValue}>
-                        {item.quantity}{' '}
-                        {item.quantity === 1
-                          ? 'item' : 'items'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {item.delivery_address && (
-                    <View style={styles.detailRow}>
-                      <View style={styles.detailIconWrap}>
-                        <Text style={styles.detailIcon}>
-                          📍
-                        </Text>
-                      </View>
-                      <View style={styles.detailInfo}>
-                        <Text style={styles.detailLabel}>
-                          DELIVERY ADDRESS
-                        </Text>
-                        <Text style={styles.detailValue}>
-                          {item.delivery_address}
-                        </Text>
-                      </View>
-                    </View>
-                  )}
-
-                  <View style={styles.detailRow}>
-                    <View style={styles.detailIconWrap}>
-                      <Text style={styles.detailIcon}>
-                        🕐
-                      </Text>
-                    </View>
-                    <View style={styles.detailInfo}>
-                      <Text style={styles.detailLabel}>
-                        ORDER DATE
-                      </Text>
-                      <Text style={styles.detailValue}>
-                        {formatDate(item.created_at)}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-
-                {/* TOTAL ROW */}
-                <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>
-                    TOTAL AMOUNT
-                  </Text>
-                  <Text style={styles.totalValue}>
-                    ₱{(item.total_price || 0).toFixed(2)}
-                  </Text>
-                </View>
-
-                {/* STATUS TRACKER */}
-                {!isCancelled && (
-                  <View style={styles.tracker}>
-                    {TRACKER_STEPS.map((step, index) => {
-                      const isDone = index <= currentIndex;
-                      const isActive =
-                        index === currentIndex;
-                      return (
-                        <View
-                          key={step.key}
-                          style={styles.trackerStep}>
-                          <View style={[
-                            styles.trackerDot,
-                            isDone && styles.trackerDotDone,
-                            isActive &&
-                            styles.trackerDotActive,
-                          ]}>
-                            <Text style={
-                              styles.trackerDotIcon
-                            }>
-                              {step.icon}
-                            </Text>
-                          </View>
-                          <Text style={[
-                            styles.trackerLabel,
-                            isDone &&
-                            styles.trackerLabelDone,
-                          ]}>
-                            {step.label}
-                          </Text>
-                          {index < 4 && (
-                            <View style={[
-                              styles.trackerLine,
-                              isDone &&
-                              index < currentIndex &&
-                              styles.trackerLineDone,
-                            ]} />
-                          )}
-                        </View>
-                      );
-                    })}
-                  </View>
-                )}
-
-                {/* CANCELLED BANNER */}
-                {isCancelled && (
-                  <View style={styles.cancelledBanner}>
-                    <Text style={styles.cancelledIcon}>
-                      ❌
-                    </Text>
-                    <Text style={styles.cancelledText}>
-                      This order was cancelled
-                    </Text>
-                  </View>
-                )}
-
-                {/* ⭐ RATE THIS ORDER BUTTON */}
-                {isDelivered && (
-                  <TouchableOpacity
-                    style={styles.reviewBtn}
-                    onPress={() => {
-                      setSelectedOrder(item);
-                      setRating(0);
-                      setComment('');
-                      setShowReview(true);
-                    }}>
-                    <Text style={styles.reviewBtnText}>
-                      ⭐ Rate This Order
-                    </Text>
-                  </TouchableOpacity>
-                )}
-
-              </View>
-            );
-          }}
         />
       )}
-
     </View>
   );
 }
@@ -729,7 +980,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
 
-  // ── HEADER ────────────────────────────────
+  // ── HEADER ──────────────────────────────────
   header: {
     backgroundColor: colors.headerBg,
     paddingTop: 52,
@@ -757,10 +1008,29 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
   },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+  },
   headerTitle: {
     color: colors.textDark,
     fontSize: 18,
     fontWeight: '900',
+  },
+  headerBadge: {
+    backgroundColor: colors.warningPale,
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+    borderRadius: borderRadius.round,
+    borderWidth: 1,
+    borderColor: colors.warning + '30',
+  },
+  headerBadgeText: {
+    color: colors.warning,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   refreshBtn: {
     width: 38,
@@ -778,9 +1048,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // ── STATS ─────────────────────────────────
+  // ── STATS BANNER ────────────────────────────
   statsBanner: {
-    backgroundColor: colors.cardBackground,
+    backgroundColor: colors.dark,
     marginHorizontal: 20,
     marginTop: 16,
     marginBottom: 8,
@@ -796,26 +1066,27 @@ const styles = StyleSheet.create({
   statItem: {
     alignItems: 'center',
     flex: 1,
+    gap: 2,
   },
+  statEmoji: { fontSize: 18, marginBottom: 2 },
   statValue: {
     color: colors.primary,
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '900',
-    marginBottom: 4,
   },
   statLabel: {
-    color: colors.textMuted,
-    fontSize: 10,
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 9,
     fontWeight: '700',
     letterSpacing: 0.5,
   },
   statDivider: {
     width: 1,
-    height: 35,
-    backgroundColor: colors.border,
+    height: 40,
+    backgroundColor: 'rgba(255,255,255,0.10)',
   },
 
-  // ── FILTER ────────────────────────────────
+  // ── FILTER ──────────────────────────────────
   filterWrap: {
     backgroundColor: colors.cardBackground,
     borderBottomWidth: 1,
@@ -827,7 +1098,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   filterChip: {
-    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: borderRadius.round,
     backgroundColor: colors.inputBackground,
@@ -847,13 +1121,33 @@ const styles = StyleSheet.create({
     color: colors.textWhite,
     fontWeight: '900',
   },
+  filterBadge: {
+    backgroundColor: colors.border,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  filterBadgeActive: {
+    backgroundColor: 'rgba(255,255,255,0.3)',
+  },
+  filterBadgeText: {
+    color: colors.textMuted,
+    fontSize: 8,
+    fontWeight: '900',
+  },
+  filterBadgeTextActive: {
+    color: colors.textWhite,
+  },
 
-  // ── LOADING ───────────────────────────────
+  // ── LOADING ─────────────────────────────────
   loadingWrap: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
+    gap: 14,
   },
   loadingText: {
     color: colors.textLight,
@@ -861,17 +1155,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // ── ORDER LIST ────────────────────────────
+  // ── ORDER LIST ──────────────────────────────
   orderList: {
     padding: 16,
     paddingBottom: 100,
   },
 
-  // ── ORDER CARD ────────────────────────────
+  // ── ORDER CARD ──────────────────────────────
   orderCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xxlarge,
-    marginBottom: 16,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: colors.border,
     overflow: 'hidden',
@@ -880,41 +1174,75 @@ const styles = StyleSheet.create({
   orderCardTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     padding: 16,
+    gap: 12,
   },
-  orderIdLabel: {
-    color: colors.textMuted,
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 2,
-    marginBottom: 2,
+  orderCardTopLeft: { flex: 1, gap: 4 },
+  orderCardTopRight: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  orderTypePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: borderRadius.round,
+    alignSelf: 'flex-start',
+  },
+  orderTypePillText: {
+    fontSize: 10,
+    fontWeight: '800',
   },
   orderId: {
     color: colors.textDark,
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '900',
+    letterSpacing: -0.5,
+  },
+  orderDate: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '500',
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: borderRadius.round,
-    gap: 5,
+    gap: 4,
     borderWidth: 1,
   },
-  statusIcon: { fontSize: 13 },
+  statusIcon: { fontSize: 12 },
   statusText: {
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
+  totalExpandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cardTotal: {
+    color: colors.primary,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  expandIcon: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+
+  // ── CARD DIVIDER ────────────────────────────
   cardDivider: {
     height: 1,
     backgroundColor: colors.border,
     marginHorizontal: 16,
   },
+
+  // ── ORDER DETAILS ───────────────────────────
   orderDetails: {
     padding: 16,
     gap: 14,
@@ -934,8 +1262,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  detailIcon: { fontSize: 18 },
-  detailInfo: { flex: 1, paddingTop: 2 },
+  detailIcon:  { fontSize: 16 },
+  detailInfo:  { flex: 1, paddingTop: 2 },
   detailLabel: {
     color: colors.textMuted,
     fontSize: 9,
@@ -950,7 +1278,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
-  // ── TOTAL ROW ─────────────────────────────
+  // ── TOTAL ROW ───────────────────────────────
   totalRow: {
     backgroundColor: colors.primaryPale,
     flexDirection: 'row',
@@ -969,17 +1297,32 @@ const styles = StyleSheet.create({
   },
   totalValue: {
     color: colors.primary,
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '900',
   },
 
-  // ── TRACKER ───────────────────────────────
+  // ── TRACKER ─────────────────────────────────
+  trackerWrap: {
+    backgroundColor: colors.background,
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  trackerTitle: {
+    color: colors.textMuted,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 2,
+    marginBottom: 16,
+    paddingLeft: 4,
+  },
   tracker: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    backgroundColor: colors.background,
+    justifyContent: 'space-between',
+    paddingBottom: 8,
   },
   trackerStep: {
     flex: 1,
@@ -987,16 +1330,16 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   trackerDot: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: colors.inputBackground,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: colors.border,
-    marginBottom: 6,
-    zIndex: 1,
+    marginBottom: 8,
+    zIndex: 2,
   },
   trackerDotDone: {
     backgroundColor: colors.primaryPale,
@@ -1013,6 +1356,7 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontWeight: '600',
     textAlign: 'center',
+    lineHeight: 12,
   },
   trackerLabelDone: {
     color: colors.primary,
@@ -1020,38 +1364,59 @@ const styles = StyleSheet.create({
   },
   trackerLine: {
     position: 'absolute',
-    top: 17,
-    left: '55%',
-    right: '-55%',
+    top: 18,
+    left: '50%',
+    width: '100%',
     height: 2,
     backgroundColor: colors.border,
-    zIndex: 0,
+    zIndex: 1,
   },
   trackerLineDone: {
     backgroundColor: colors.primary,
+    opacity: 0.6,
   },
 
-  // ── CANCELLED ─────────────────────────────
+  // ── CANCELLED BANNER ────────────────────────
   cancelledBanner: {
     backgroundColor: colors.dangerPale,
     flexDirection: 'row',
     alignItems: 'center',
     padding: 14,
-    gap: 10,
+    gap: 12,
     borderTopWidth: 1,
     borderTopColor: colors.danger + '20',
   },
-  cancelledIcon: { fontSize: 18 },
-  cancelledText: {
+  cancelledIcon:  { fontSize: 20 },
+  cancelledTitle: {
     color: colors.danger,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  cancelledSub: {
+    color: colors.danger,
+    fontSize: 11,
+    opacity: 0.7,
   },
 
-  // ── REVIEW BUTTON ─────────────────────────
+  // ── ACTION BUTTONS ──────────────────────────
+  actionBtns: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  cancelOrderBtn: {
+    padding: 15,
+    alignItems: 'center',
+    backgroundColor: colors.dangerPale,
+  },
+  cancelOrderBtnText: {
+    color: colors.danger,
+    fontWeight: '800',
+    fontSize: 13,
+  },
   reviewBtn: {
     backgroundColor: colors.primaryPale,
-    padding: 14,
+    padding: 15,
     alignItems: 'center',
     borderTopWidth: 1,
     borderTopColor: colors.borderGold,
@@ -1063,7 +1428,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // ── EMPTY ─────────────────────────────────
+  // ── EMPTY STATES ────────────────────────────
   emptyWrap: {
     flex: 1,
     alignItems: 'center',
@@ -1082,7 +1447,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderGold,
     ...shadowGold,
   },
-  emptyEmoji: { fontSize: 55 },
+  emptyEmoji:  { fontSize: 55 },
   emptyTitle: {
     fontSize: 24,
     fontWeight: '900',
@@ -1110,20 +1475,25 @@ const styles = StyleSheet.create({
   },
   emptyFilterWrap: {
     alignItems: 'center',
-    paddingVertical: 50,
-    gap: 12,
+    paddingVertical: 60,
+    gap: 10,
   },
-  emptyFilterIcon: { fontSize: 40 },
-  emptyFilterText: {
+  emptyFilterEmoji: { fontSize: 48 },
+  emptyFilterTitle: {
+    color: colors.textDark,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  emptyFilterSub: {
     color: colors.textLight,
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '500',
   },
 
-  // ── REVIEW MODAL ──────────────────────────
+  // ── REVIEW MODAL ────────────────────────────
   modalOverlay: {
     flex: 1,
-    backgroundColor: colors.overlay,
+    backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'flex-end',
   },
   modalContent: {
@@ -1131,7 +1501,8 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     padding: 24,
-    paddingBottom: 40,
+    paddingBottom: 10,
+    maxHeight: '88%',
     borderTopWidth: 1,
     borderColor: colors.borderGold,
   },
@@ -1141,7 +1512,7 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: colors.border,
     alignSelf: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   modalTitle: {
     fontSize: 22,
@@ -1154,28 +1525,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textLight,
     textAlign: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   starsRow: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 8,
-    marginBottom: 12,
+    gap: 6,
+    marginBottom: 10,
   },
-  starBtn: { padding: 4 },
+  starBtn: { padding: 6 },
   starIcon: {
-    fontSize: 38,
+    fontSize: 40,
     color: colors.border,
   },
-  starActive: {
-    color: colors.primary,
-  },
+  starActive: { color: colors.primary },
   ratingLabel: {
     color: colors.primary,
     fontSize: 15,
     fontWeight: '800',
     textAlign: 'center',
     marginBottom: 20,
+    minHeight: 22,
+  },
+  tagsTitle: {
+    color: colors.textMuted,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 2,
+    marginBottom: 10,
   },
   tagsRow: {
     flexDirection: 'row',
@@ -1186,7 +1563,7 @@ const styles = StyleSheet.create({
   tag: {
     backgroundColor: colors.inputBackground,
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingVertical: 8,
     borderRadius: borderRadius.round,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1212,13 +1589,14 @@ const styles = StyleSheet.create({
     color: colors.textDark,
     borderWidth: 1,
     borderColor: colors.border,
-    minHeight: 80,
+    minHeight: 85,
     textAlignVertical: 'top',
-    marginBottom: 20,
+    marginBottom: 18,
   },
   modalBtns: {
     flexDirection: 'row',
     gap: 12,
+    marginBottom: 8,
   },
   skipBtn: {
     flex: 1,
@@ -1242,9 +1620,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     ...shadowGold,
   },
-  submitBtnDisabled: {
-    opacity: 0.5,
-  },
+  submitBtnDisabled: { opacity: 0.45 },
   submitBtnText: {
     color: colors.textWhite,
     fontWeight: '900',

@@ -1,4 +1,7 @@
-import { useEffect, useState, useRef } from 'react';
+// ============================================
+// ZAVARA FOOD SCREEN - COMPLETE FIXED v2.1
+// ============================================
+import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,6 +15,8 @@ import {
   Animated,
   TextInput,
   Dimensions,
+  RefreshControl,
+  Alert,
 } from 'react-native';
 import axios from 'axios';
 import {
@@ -23,34 +28,37 @@ import {
   borderRadius,
 } from '../theme';
 import CartScreen from './CartScreen';
+import { API_URL } from '../config'; // 🔧 FIX: from config
 
-const API_URL = 'https://onebohol-production.up.railway.app';
 const { width } = Dimensions.get('window');
 
 export default function FoodScreen({ userId, onBack }) {
-  const [restaurants, setRestaurants] = useState([]);
-  const [selectedRestaurant, setSelectedRestaurant] = useState(null);
-  const [menuItems, setMenuItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [menuLoading, setMenuLoading] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState('All');
-  const [selectedMenuCat, setSelectedMenuCat] = useState('All');
-  const [cart, setCart] = useState([]);
-  const [showCart, setShowCart] = useState(false);
-  const [searchText, setSearchText] = useState('');
-  const [searchFocused, setSearchFocused] = useState(false);
 
-  // ✅ FIXED: Added missing state
+  // ── STATES ──────────────────────────────────
+  const [restaurants, setRestaurants]           = useState([]);
+  const [selectedRestaurant, setSelectedRestaurant] = useState(null);
+  const [menuItems, setMenuItems]               = useState([]);
+  const [loading, setLoading]                   = useState(true);
+  const [menuLoading, setMenuLoading]           = useState(false);
+  const [refreshing, setRefreshing]             = useState(false); // 🆕
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [selectedMenuCat, setSelectedMenuCat]   = useState('All');
+  const [cart, setCart]                         = useState([]);
+  const [showCart, setShowCart]                 = useState(false);
+  const [searchText, setSearchText]             = useState('');
+  const [searchFocused, setSearchFocused]       = useState(false);
   const [restaurantRatings, setRestaurantRatings] = useState({});
 
-  const headerAnim = useRef(new Animated.Value(0)).current;
-  const cartBounce = useRef(new Animated.Value(1)).current;
+  // ── ANIMATIONS ──────────────────────────────
+  const headerAnim  = useRef(new Animated.Value(0)).current;
+  const cartBounce  = useRef(new Animated.Value(1)).current;
 
   const categories = [
     'All', 'Fast Food', 'Carinderia',
     'Pizza', 'Cafe', 'Seafood', 'BBQ',
   ];
 
+  // ── STARTUP ─────────────────────────────────
   useEffect(() => {
     fetchRestaurants();
     Animated.timing(headerAnim, {
@@ -60,6 +68,7 @@ export default function FoodScreen({ userId, onBack }) {
     }).start();
   }, []);
 
+  // Cart bounce animation
   useEffect(() => {
     if (cart.length > 0) {
       Animated.sequence([
@@ -77,44 +86,81 @@ export default function FoodScreen({ userId, onBack }) {
     }
   }, [cart.length]);
 
+  // ── FETCH RESTAURANTS ───────────────────────
   const fetchRestaurants = async () => {
     setLoading(true);
     try {
       const response = await axios.get(
-        `${API_URL}/restaurants`
+        `${API_URL}/restaurants`,
+        { timeout: 10000 }
       );
-      setRestaurants(response.data);
+      const data = response.data;
+      setRestaurants(data);
+
+      // 🔧 FIX: Fetch ratings for ALL restaurants at once
+      fetchAllRatings(data);
     } catch {
       setRestaurants([]);
     }
     setLoading(false);
   };
 
-  // ✅ FIXED: fetchRatings now properly defined
+  // 🆕 Pull to refresh
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchRestaurants();
+    setRefreshing(false);
+  }, []);
+
+  // 🔧 FIX: Fetch ratings for all restaurants
+  const fetchAllRatings = async (restaurantList) => {
+    const ratingMap = {};
+    await Promise.allSettled(
+      restaurantList.map(async (r) => {
+        try {
+          const res = await axios.get(
+            `${API_URL}/reviews/restaurant/${r.id}`,
+            { timeout: 5000 }
+          );
+          ratingMap[r.id] = {
+            avg: res.data.average_rating || 0,
+            total: res.data.total_reviews || 0,
+          };
+        } catch {
+          ratingMap[r.id] = { avg: 0, total: 0 };
+        }
+      })
+    );
+    setRestaurantRatings(ratingMap);
+  };
+
+  // Fetch ratings for a single restaurant
   const fetchRatings = async (restaurantId) => {
     try {
       const res = await axios.get(
-        `${API_URL}/reviews/restaurant/${restaurantId}`
+        `${API_URL}/reviews/restaurant/${restaurantId}`,
+        { timeout: 5000 }
       );
       setRestaurantRatings(prev => ({
         ...prev,
         [restaurantId]: {
-          avg: res.data.average_rating,
-          total: res.data.total_reviews,
+          avg: res.data.average_rating || 0,
+          total: res.data.total_reviews || 0,
         }
       }));
     } catch {}
   };
 
+  // ── FETCH MENU ──────────────────────────────
   const fetchMenu = async (restaurant) => {
     setSelectedRestaurant(restaurant);
     setSelectedMenuCat('All');
     setMenuLoading(true);
-    // Also fetch ratings when opening restaurant
     fetchRatings(restaurant.id);
     try {
       const response = await axios.get(
-        `${API_URL}/restaurants/${restaurant.id}/menu`
+        `${API_URL}/restaurants/${restaurant.id}/menu`,
+        { timeout: 10000 }
       );
       setMenuItems(response.data);
     } catch {
@@ -123,6 +169,8 @@ export default function FoodScreen({ userId, onBack }) {
     setMenuLoading(false);
   };
 
+  // ── CART FUNCTIONS ──────────────────────────
+  // 🔧 FIX: addToCart now includes order_type and menu_item_id
   const addToCart = (item) => {
     const existing = cart.find(c => c.id === item.id);
     if (existing) {
@@ -132,8 +180,19 @@ export default function FoodScreen({ userId, onBack }) {
           : c
       ));
     } else {
-      setCart([...cart, { ...item, quantity: 1 }]);
+      setCart([...cart, {
+        ...item,
+        quantity: 1,
+        order_type: 'food',        // 🔑 Critical!
+        menu_item_id: item.id,     // 🔑 Critical!
+        restaurant_name: selectedRestaurant?.name,
+        restaurant_id: selectedRestaurant?.id,
+      }]);
     }
+  };
+
+  const removeFromCart = (id) => {
+    setCart(cart.filter(c => c.id !== id));
   };
 
   const cartCount = cart.reduce(
@@ -143,29 +202,38 @@ export default function FoodScreen({ userId, onBack }) {
     (sum, i) => sum + i.price * i.quantity, 0
   );
 
+  // ── FILTER LOGIC ────────────────────────────
   const filteredRestaurants = restaurants.filter(r => {
     const matchCat = selectedCategory === 'All' ||
       r.category === selectedCategory;
-    const matchSearch = r.name.toLowerCase().includes(
-      searchText.toLowerCase()
-    );
+    const matchSearch = !searchText.trim() ||
+      r.name?.toLowerCase().includes(
+        searchText.toLowerCase()
+      ) ||
+      r.description?.toLowerCase().includes(
+        searchText.toLowerCase()
+      );
     return matchCat && matchSearch;
   });
 
   const filteredMenu = selectedMenuCat === 'All'
     ? menuItems
-    : menuItems.filter(
-        i => i.category === selectedMenuCat
-      );
+    : menuItems.filter(i => i.category === selectedMenuCat);
 
   const menuCategories = [
     'All',
-    ...new Set(menuItems.map(i => i.category)),
+    ...new Set(
+      menuItems
+        .map(i => i.category)
+        .filter(Boolean)
+    ),
   ];
 
-  const getRating = (id) => {
-    const ratings = [4.2, 4.5, 4.7, 4.8, 4.3, 4.6, 4.9];
-    return ratings[id % ratings.length];
+  // Helper for display rating
+  const getDisplayRating = (id) => {
+    const r = restaurantRatings[id];
+    if (r && r.avg > 0) return r.avg.toFixed(1);
+    return 'New';
   };
 
   // ============================================
@@ -178,9 +246,11 @@ export default function FoodScreen({ userId, onBack }) {
         setCart={setCart}
         userId={userId}
         onBack={() => setShowCart(false)}
-        onOrderSuccess={() => {
+        onOrderPlaced={() => {
+          // 🔧 FIX: correct prop name
           setShowCart(false);
           setSelectedRestaurant(null);
+          setCart([]);
         }}
       />
     );
@@ -190,6 +260,8 @@ export default function FoodScreen({ userId, onBack }) {
   // MENU SCREEN
   // ============================================
   if (selectedRestaurant) {
+    const rating = restaurantRatings[selectedRestaurant.id];
+
     return (
       <View style={styles.container}>
         <StatusBar
@@ -204,6 +276,7 @@ export default function FoodScreen({ userId, onBack }) {
             <Image
               source={{ uri: selectedRestaurant.image_url }}
               style={styles.heroImage}
+              resizeMode="cover"
             />
           ) : (
             <View style={styles.heroPlaceholder}>
@@ -222,25 +295,30 @@ export default function FoodScreen({ userId, onBack }) {
                   ● OPEN NOW
                 </Text>
               </View>
-              <View style={[styles.heroBadge,
-                { backgroundColor: 'rgba(255,255,255,0.15)' }]}>
+              <View style={[styles.heroBadge, {
+                backgroundColor: 'rgba(255,255,255,0.15)'
+              }]}>
                 <Text style={styles.heroBadgeText}>
                   {selectedRestaurant.category}
                 </Text>
               </View>
             </View>
+
             <Text style={styles.heroName}>
               {selectedRestaurant.name}
             </Text>
             <Text style={styles.heroAddress}>
               📍 {selectedRestaurant.address}
             </Text>
+
             <View style={styles.heroMetaRow}>
               <View style={styles.heroMetaItem}>
                 <Text style={styles.heroMetaIcon}>⭐</Text>
                 <Text style={styles.heroMetaText}>
-                  {restaurantRatings[selectedRestaurant.id]?.avg
-                    || getRating(selectedRestaurant.id)}
+                  {getDisplayRating(selectedRestaurant.id)}
+                  {rating?.total > 0
+                    ? ` (${rating.total})`
+                    : ''}
                 </Text>
               </View>
               <View style={styles.heroMetaDot} />
@@ -260,14 +338,14 @@ export default function FoodScreen({ userId, onBack }) {
             </View>
           </View>
 
-          {/* BACK BUTTON */}
+          {/* BACK */}
           <TouchableOpacity
             style={styles.heroBackBtn}
             onPress={() => setSelectedRestaurant(null)}>
             <Text style={styles.heroBackBtnText}>←</Text>
           </TouchableOpacity>
 
-          {/* CART BUTTON */}
+          {/* CART */}
           <TouchableOpacity
             style={styles.heroCartBtn}
             onPress={() => setShowCart(true)}>
@@ -319,6 +397,14 @@ export default function FoodScreen({ userId, onBack }) {
           <Text style={styles.menuCountText}>
             {filteredMenu.length} items available
           </Text>
+          {cart.length > 0 && (
+            <TouchableOpacity onPress={() =>
+              setShowCart(true)}>
+              <Text style={styles.viewCartLink}>
+                View Cart ({cartCount}) →
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* MENU ITEMS */}
@@ -354,8 +440,12 @@ export default function FoodScreen({ userId, onBack }) {
                 c => c.id === item.id
               );
               return (
-                <View style={styles.menuCard}>
+                <View style={[
+                  styles.menuCard,
+                  inCart && styles.menuCardInCart,
+                ]}>
                   <View style={styles.menuCardLeft}>
+                    {/* IN CART BADGE */}
                     {inCart && (
                       <View style={styles.inCartBadge}>
                         <Text style={styles.inCartBadgeText}>
@@ -378,6 +468,19 @@ export default function FoodScreen({ userId, onBack }) {
                         {' '}each
                       </Text>
                     </Text>
+
+                    {/* 🆕 Remove from cart button */}
+                    {inCart && (
+                      <TouchableOpacity
+                        onPress={() =>
+                          removeFromCart(item.id)
+                        }
+                        style={styles.removeFromCartBtn}>
+                        <Text style={styles.removeFromCartText}>
+                          🗑️ Remove
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
 
                   <View style={styles.menuCardRight}>
@@ -385,6 +488,7 @@ export default function FoodScreen({ userId, onBack }) {
                       <Image
                         source={{ uri: item.image_url }}
                         style={styles.menuItemImg}
+                        resizeMode="cover"
                       />
                     ) : (
                       <View style={
@@ -491,7 +595,7 @@ export default function FoodScreen({ userId, onBack }) {
         </View>
         <Text style={styles.headerTitle}>🍴 Cuisine</Text>
         <Text style={styles.headerSub}>
-          {restaurants.length} restaurants near you
+          {filteredRestaurants.length} restaurants found
         </Text>
       </Animated.View>
 
@@ -551,7 +655,7 @@ export default function FoodScreen({ userId, onBack }) {
       {!loading && (
         <View style={styles.resultsRow}>
           <Text style={styles.resultsText}>
-            {filteredRestaurants.length} restaurants found
+            {filteredRestaurants.length} restaurants
           </Text>
           {searchText.length > 0 && (
             <Text style={styles.resultsSearch}>
@@ -578,6 +682,15 @@ export default function FoodScreen({ userId, onBack }) {
           keyExtractor={(item) => item.id.toString()}
           contentContainerStyle={styles.restaurantList}
           showsVerticalScrollIndicator={false}
+          // 🆕 Pull to refresh
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <Text style={styles.emptyIcon}>🍔</Text>
@@ -585,7 +698,9 @@ export default function FoodScreen({ userId, onBack }) {
                 No restaurants found
               </Text>
               <Text style={styles.emptySub}>
-                Try a different search or category
+                {searchText
+                  ? `No results for "${searchText}"`
+                  : 'No restaurants open right now'}
               </Text>
               <TouchableOpacity
                 style={styles.emptyBtn}
@@ -599,116 +714,125 @@ export default function FoodScreen({ userId, onBack }) {
               </TouchableOpacity>
             </View>
           }
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.restaurantCard}
-              onPress={() => fetchMenu(item)}
-              activeOpacity={0.92}>
+          renderItem={({ item }) => {
+            const rating = restaurantRatings[item.id];
+            return (
+              <TouchableOpacity
+                style={styles.restaurantCard}
+                onPress={() => fetchMenu(item)}
+                activeOpacity={0.92}>
 
-              {/* IMAGE */}
-              <View style={styles.restaurantImgWrap}>
-                {item.image_url ? (
-                  <Image
-                    source={{ uri: item.image_url }}
-                    style={styles.restaurantImg}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={
-                    styles.restaurantImgPlaceholder
-                  }>
-                    <Text style={
-                      styles.restaurantImgEmoji
+                {/* IMAGE */}
+                <View style={styles.restaurantImgWrap}>
+                  {item.image_url ? (
+                    <Image
+                      source={{ uri: item.image_url }}
+                      style={styles.restaurantImg}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={
+                      styles.restaurantImgPlaceholder
                     }>
-                      🍔
-                    </Text>
+                      <Text style={
+                        styles.restaurantImgEmoji
+                      }>
+                        🍔
+                      </Text>
+                    </View>
+                  )}
+                  <View style={styles.imgBadges}>
+                    <View style={styles.openBadge}>
+                      <Text style={styles.openBadgeText}>
+                        ● Open
+                      </Text>
+                    </View>
                   </View>
-                )}
-                <View style={styles.imgBadges}>
-                  <View style={styles.openBadge}>
-                    <Text style={styles.openBadgeText}>
-                      ● Open
+                  <View style={styles.catTag}>
+                    <Text style={styles.catTagText}>
+                      {item.category}
                     </Text>
                   </View>
                 </View>
-                <View style={styles.catTag}>
-                  <Text style={styles.catTagText}>
-                    {item.category}
-                  </Text>
-                </View>
-              </View>
 
-              {/* INFO */}
-              <View style={styles.restaurantInfo}>
-                <View style={styles.restaurantNameRow}>
+                {/* INFO */}
+                <View style={styles.restaurantInfo}>
+                  <View style={styles.restaurantNameRow}>
+                    <Text
+                      style={styles.restaurantName}
+                      numberOfLines={1}>
+                      {item.name}
+                    </Text>
+
+                    {/* 🔧 FIX: Real ratings */}
+                    <View style={styles.ratingWrap}>
+                      <Text style={styles.ratingStar}>
+                        ⭐
+                      </Text>
+                      <Text style={styles.ratingText}>
+                        {rating?.avg > 0
+                          ? rating.avg.toFixed(1)
+                          : 'New'}
+                      </Text>
+                      {rating?.total > 0 && (
+                        <Text style={styles.ratingCount}>
+                          ({rating.total})
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+
+                  {item.description ? (
+                    <Text
+                      style={styles.restaurantDesc}
+                      numberOfLines={1}>
+                      {item.description}
+                    </Text>
+                  ) : null}
+
                   <Text
-                    style={styles.restaurantName}
+                    style={styles.restaurantAddress}
                     numberOfLines={1}>
-                    {item.name}
+                    📍 {item.address}
                   </Text>
 
-                  {/* ✅ FIXED: Real ratings from API */}
-                  <View style={styles.ratingWrap}>
-                    <Text style={styles.ratingStar}>⭐</Text>
-                    <Text style={styles.ratingText}>
-                      {restaurantRatings[item.id]?.avg
-                        || getRating(item.id)}
-                    </Text>
-                    <Text style={styles.ratingCount}>
-                      ({restaurantRatings[item.id]?.total
-                        || 0})
-                    </Text>
+                  <View style={styles.restaurantMetaRow}>
+                    <View style={styles.restaurantMetaItem}>
+                      <Text style={styles.restaurantMetaText}>
+                        🛵 {item.delivery_range_km}km
+                      </Text>
+                    </View>
+                    <View style={
+                      styles.restaurantMetaDivider
+                    } />
+                    <View style={styles.restaurantMetaItem}>
+                      <Text style={styles.restaurantMetaText}>
+                        💰 ₱{item.delivery_fee}
+                      </Text>
+                    </View>
+                    <View style={
+                      styles.restaurantMetaDivider
+                    } />
+                    <View style={styles.restaurantMetaItem}>
+                      <Text style={styles.restaurantMetaText}>
+                        ⏱️ 30-45 min
+                      </Text>
+                    </View>
                   </View>
+
+                  <TouchableOpacity
+                    style={styles.restaurantOrderBtn}
+                    onPress={() => fetchMenu(item)}>
+                    <Text style={
+                      styles.restaurantOrderBtnText
+                    }>
+                      View Menu →
+                    </Text>
+                  </TouchableOpacity>
                 </View>
-
-                <Text
-                  style={styles.restaurantDesc}
-                  numberOfLines={1}>
-                  {item.description || 'Local restaurant'}
-                </Text>
-
-                <Text
-                  style={styles.restaurantAddress}
-                  numberOfLines={1}>
-                  📍 {item.address}
-                </Text>
-
-                <View style={styles.restaurantMetaRow}>
-                  <View style={styles.restaurantMetaItem}>
-                    <Text style={styles.restaurantMetaText}>
-                      🛵 {item.delivery_range_km}km
-                    </Text>
-                  </View>
-                  <View style={
-                    styles.restaurantMetaDivider
-                  } />
-                  <View style={styles.restaurantMetaItem}>
-                    <Text style={styles.restaurantMetaText}>
-                      💰 ₱{item.delivery_fee}
-                    </Text>
-                  </View>
-                  <View style={
-                    styles.restaurantMetaDivider
-                  } />
-                  <View style={styles.restaurantMetaItem}>
-                    <Text style={styles.restaurantMetaText}>
-                      ⏱️ 30-45 min
-                    </Text>
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.restaurantOrderBtn}
-                  onPress={() => fetchMenu(item)}>
-                  <Text style={
-                    styles.restaurantOrderBtnText
-                  }>
-                    View Menu →
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
-          )}
+              </TouchableOpacity>
+            );
+          }}
         />
       )}
 
@@ -726,7 +850,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
 
-  // ── HEADER ────────────────────────────────
+  // ── HEADER ──────────────────────────────────
   header: {
     backgroundColor: colors.headerBg,
     paddingTop: 52,
@@ -772,6 +896,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.borderGold,
+    position: 'relative',
   },
   headerCartIcon: { fontSize: 18 },
   headerCartBadge: {
@@ -803,7 +928,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // ── SEARCH ────────────────────────────────
+  // ── SEARCH ──────────────────────────────────
   searchWrap: {
     paddingHorizontal: 20,
     paddingVertical: 12,
@@ -837,9 +962,10 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 14,
     fontWeight: '700',
+    paddingHorizontal: 4,
   },
 
-  // ── CATEGORIES ────────────────────────────
+  // ── CATEGORIES ──────────────────────────────
   catWrap: {
     backgroundColor: colors.cardBackground,
     borderBottomWidth: 1,
@@ -872,7 +998,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
-  // ── RESULTS ───────────────────────────────
+  // ── RESULTS ─────────────────────────────────
   resultsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -891,7 +1017,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // ── LOADING ───────────────────────────────
+  // ── LOADING ─────────────────────────────────
   loadingWrap: {
     flex: 1,
     alignItems: 'center',
@@ -904,7 +1030,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // ── EMPTY ─────────────────────────────────
+  // ── EMPTY ───────────────────────────────────
   emptyWrap: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -939,7 +1065,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 
-  // ── RESTAURANT LIST ───────────────────────
+  // ── RESTAURANT LIST ─────────────────────────
   restaurantList: {
     padding: 16,
     paddingBottom: 30,
@@ -1001,9 +1127,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
   },
-  restaurantInfo: {
-    padding: 16,
-  },
+  restaurantInfo: { padding: 16 },
   restaurantNameRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1088,7 +1212,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // ── HERO ──────────────────────────────────
+  // ── HERO ────────────────────────────────────
   heroWrap: {
     height: 300,
     position: 'relative',
@@ -1151,6 +1275,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flexWrap: 'wrap',
   },
   heroMetaItem: {
     flexDirection: 'row',
@@ -1222,7 +1347,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
-  // ── MENU CATEGORIES ───────────────────────
+  // ── MENU CATEGORIES ─────────────────────────
   menuCatWrap: {
     backgroundColor: colors.cardBackground,
     borderBottomWidth: 1,
@@ -1260,18 +1385,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     backgroundColor: colors.cardBackground,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   menuCountText: {
     color: colors.textLight,
     fontSize: 12,
     fontWeight: '600',
   },
+  // 🆕 View cart link in menu header
+  viewCartLink: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+  },
   menuList: {
     padding: 16,
     paddingBottom: 120,
   },
 
-  // ── MENU CARD ─────────────────────────────
+  // ── MENU CARD ───────────────────────────────
   menuCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.xlarge,
@@ -1283,6 +1417,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     ...shadow,
+  },
+  // 🆕 Highlight when in cart
+  menuCardInCart: {
+    borderColor: colors.success + '40',
+    backgroundColor: colors.successPale + '60',
   },
   menuCardLeft: {
     flex: 1,
@@ -1325,6 +1464,16 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontWeight: '400',
   },
+  // 🆕 Remove from cart button
+  removeFromCartBtn: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+  },
+  removeFromCartText: {
+    color: colors.danger,
+    fontSize: 11,
+    fontWeight: '700',
+  },
   menuCardRight: {
     alignItems: 'center',
     gap: 10,
@@ -1363,7 +1512,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 
-  // ── FLOATING CART ─────────────────────────
+  // ── FLOATING CART ───────────────────────────
   floatingCart: {
     position: 'absolute',
     bottom: 20,

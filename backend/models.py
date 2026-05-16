@@ -183,17 +183,23 @@ class Product(Base):
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     price = Column(Float, nullable=False)
-    unit = Column(String, nullable=False)      # kg, piece, bundle
-    quantity = Column(Integer, nullable=False)  # stock
+    unit = Column(String, nullable=False)
+    quantity = Column(Integer, nullable=False)
     category = Column(String, nullable=False)
-    image_url = Column(String, nullable=True)   # ← ADD THIS
+    image_url = Column(String, nullable=True)
     is_available = Column(Boolean, default=True)
-    is_approved = Column(Boolean, default=False) # ← ADD THIS
-    total_sold = Column(Integer, default=0)      # ← ADD THIS
-    rating = Column(Float, default=0.0)          # ← ADD THIS
-    total_reviews = Column(Integer, default=0)   # ← ADD THIS
-    barangay = Column(String, nullable=True)     # ← ADD THIS
-    municipality = Column(String, nullable=True) # ← ADD THIS
+    is_approved = Column(Boolean, default=False)
+    total_sold = Column(Integer, default=0)
+    rating = Column(Float, default=0.0)
+    total_reviews = Column(Integer, default=0)
+    barangay = Column(String, nullable=True)
+    municipality = Column(String, nullable=True)
+
+    # ✅ NEW - controls who sees this product
+    # "wholesale" = sellers/producers only
+    # "retail"    = regular customers
+    market_type = Column(String, default="wholesale")
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     farmer = relationship("User", back_populates="products")
