@@ -22,13 +22,38 @@
         "backgroundColor": "#1C1710"
       },
       "backgroundColor": "#1C1710",
-      "package": "com.zavara.app"
+      "package": "com.zavara.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-secure-store"
-    ]
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "ZAVARA needs location to show nearby products and services."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#C4951E"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c728d92b-ab88-4532-b505-d800ac8f270f"
+      }
+    }
   }
 }
