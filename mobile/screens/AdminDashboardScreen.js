@@ -410,80 +410,85 @@ export default function AdminDashboardScreen({
 
   // ── FETCH STATS ─────────────────────────────
   const fetchStats = useCallback(async () => {
-    try {
-      const res = await axios.get(
-        `${API_URL}/admin/stats?user_id=${userId}`,
-        { timeout: 10000 }
-      );
-      setStats(res.data);
-    } catch {
-      // Stats endpoint may not exist yet
-      // Show placeholder data
-      setStats({
-        total_users:          '—',
-        total_orders:         '—',
-        pending_verifications: 0,
-        pending_products:      0,
-        total_revenue:        '—',
-      });
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [userId]);
+  if (!userId) return; // ← ADD THIS!
+  try {
+    const res = await axios.get(
+      `${API_URL}/admin/stats?user_id=${userId}`,
+      { timeout: 20000 } // ← increase!
+    );
+    setStats(res.data);
+  } catch {
+    setStats({
+      total_users:           '—',
+      total_orders:          '—',
+      pending_verifications: 0,
+      pending_products:      0,
+      total_revenue:         '—',
+    });
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+}, [userId]);
 
   // ── FETCH VERIFICATIONS ──────────────────────
   const fetchVerifications = useCallback(async () => {
-    setLoadingVerify(true);
-    try {
-      const res = await axios.get(
-        `${API_URL}/verify/pending?user_id=${userId}`,
-        { timeout: 10000 }
-      );
-      setVerifications(res.data || []);
-    } catch {
-      setVerifications([]);
-    } finally {
-      setLoadingVerify(false);
-    }
-  }, [userId]);
+  if (!userId) return; //  GUARD CLAUSE: Kung walang userId, EXIT AGAD! Protektado ang app mo dito.
+
+  setLoadingVerify(true); // 2. Tatakbo lang ito kapag 100% siguradong may valid na userId na.
+  try {
+    const res = await axios.get(
+      `${API_URL}/verify/pending?user_id=${userId}`, // 3. Garantisadong may tamang ID na ipapasa sa backend.
+      { timeout: 10000 }
+    );
+    setVerifications(res.data || []);
+  } catch {
+    setVerifications([]);
+  } finally {
+    setLoadingVerify(false);
+  }
+}, [userId]);
 
   // ── FETCH PENDING PRODUCTS ───────────────────
   const fetchPendingProducts = useCallback(async () => {
-    setLoadingProducts(true);
-    try {
-      const res = await axios.get(
-        `${API_URL}/admin/products/pending?user_id=${userId}`,
-        { timeout: 10000 }
-      );
-      setPendingProducts(res.data?.products || []);
-    } catch {
-      setPendingProducts([]);
-    } finally {
-      setLoadingProducts(false);
-    }
-  }, [userId]);
+  if (!userId) return; //  Hinarang agad! Kung walang ID, walang biyahe ang network request.
+
+  setLoadingProducts(true);
+  try {
+    const res = await axios.get(
+      `${API_URL}/admin/products/pending?user_id=${userId}`, // Guaranteed na may valid na userId na itong kasama
+      { timeout: 10000 }
+    );
+    setPendingProducts(res.data?.products || []);
+  } catch {
+    setPendingProducts([]);
+  } finally {
+    setLoadingProducts(false);
+  }
+}, [userId]);
 
   // ── FETCH USERS ──────────────────────────────
   const fetchUsers = useCallback(async () => {
-    setLoadingUsers(true);
-    try {
-      const res = await axios.get(
-        `${API_URL}/admin/users?user_id=${userId}`,
-        { timeout: 10000 }
-      );
-      setUsers(res.data?.users || []);
-    } catch {
-      setUsers([]);
-    } finally {
-      setLoadingUsers(false);
-    }
-  }, [userId]);
+  if (!userId) return; //  Hinarang agad! Ligtas ang listahan ng mga users.
+
+  setLoadingUsers(true);
+  try {
+    const res = await axios.get(
+      `${API_URL}/admin/users?user_id=${userId}`, // Garantisadong may tamang ID na
+      { timeout: 10000 }
+    );
+    setUsers(res.data?.users || []);
+  } catch {
+    setUsers([]);
+  } finally {
+    setLoadingUsers(false);
+  }
+}, [userId]);
 
   // ── STARTUP ──────────────────────────────────
   useEffect(() => {
-    fetchStats();
-  }, []);
+  if (userId) fetchStats();
+}, [userId]); // ← watches for userId!
 
   useEffect(() => {
     if (activeTab === 'verifications') fetchVerifications();

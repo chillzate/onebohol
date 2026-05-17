@@ -1,9 +1,17 @@
 // ============================================
-// ZAVARA MARKET SCREEN - v3.0
-// ✅ Recreated + Performance Improved
-// ✅ Role-based product visibility
-// ✅ Cart persistence
-// ✅ Better than before!
+// ZAVARA MARKET SCREEN - v4.0
+// INSPIRED BY: Shopee, Lazada, GrabMart, Tokopedia
+// Improvements over v3.0:
+// 1. Header fade + slide entrance animation
+// 2. Product cards stagger fade + slide entrance
+// 3. Product card scale press feedback
+// 4. Skeleton grid loading screen
+// 5. Category chip scale pop on select
+// 6. Search bar animated focus glow
+// 7. Empty state floating emoji animation
+// 8. Low stock pulse animation
+// 9. Add to cart bounce feedback
+// 10. Screen entrance fade animation
 // ============================================
 import {
   useEffect,
@@ -24,8 +32,9 @@ import {
   TextInput,
   RefreshControl,
   Animated,
+  ScrollView,
 } from 'react-native';
-import axios from 'axios';
+import axios        from 'axios';
 import * as Haptics from 'expo-haptics';
 import {
   colors,
@@ -40,7 +49,7 @@ import { useAppContext } from '../context/AppContext';
 import CartScreen        from './CartScreen';
 
 // ============================================
-// CONSTANTS - outside component = no recreate
+// CONSTANTS
 // ============================================
 const CATEGORIES = [
   'All', 'Vegetables', 'Fruits',
@@ -49,16 +58,286 @@ const CATEGORIES = [
 ];
 
 // ============================================
-// PRODUCT CARD - separate component
-// Prevents full list re-render on cart change
+// HELPER: Haptic with silent fail
 // ============================================
-function ProductCard({ item, cartQty, onAdd, onRemove }) {
+async function haptic(type = 'light') {
+  try {
+    if (type === 'light') {
+      await Haptics.impactAsync(
+        Haptics.ImpactFeedbackStyle.Light
+      );
+    } else if (type === 'medium') {
+      await Haptics.impactAsync(
+        Haptics.ImpactFeedbackStyle.Medium
+      );
+    }
+  } catch (_) {}
+}
+
+// ============================================
+// SUB COMPONENT: Skeleton Product Card
+// ============================================
+function SkeletonProductCard() {
+  const shimmer = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmer, {
+          toValue:         1,
+          duration:        800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shimmer, {
+          toValue:         0,
+          duration:        800,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  const opacity = shimmer.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [0.4, 0.85],
+  });
+
+  return (
+    <Animated.View style={[
+      styles.skeletonCard,
+      { opacity },
+    ]}>
+      <View style={styles.skeletonImg} />
+      <View style={styles.skeletonBody}>
+        <View style={styles.skeletonLine1} />
+        <View style={styles.skeletonLine2} />
+        <View style={styles.skeletonPrice} />
+        <View style={styles.skeletonBtn} />
+      </View>
+    </Animated.View>
+  );
+}
+
+// ============================================
+// SUB COMPONENT: Animated Category Chip
+// ============================================
+function CategoryChip({ label, active, onPress }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  const handleAdd = useCallback(() => {
+  const handlePress = () => {
+    haptic('light');
     Animated.sequence([
       Animated.spring(scaleAnim, {
-        toValue:         0.93,
+        toValue:         0.88,
+        friction:        8,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue:         1,
+        friction:        5,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    onPress();
+  };
+
+  return (
+    <Animated.View style={{
+      transform: [{ scale: scaleAnim }],
+    }}>
+      <TouchableOpacity
+        style={[
+          styles.catChip,
+          active && styles.catChipActive,
+        ]}
+        onPress={handlePress}
+        activeOpacity={1}>
+        <Text style={[
+          styles.catChipText,
+          active && styles.catChipTextActive,
+        ]}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// ============================================
+// SUB COMPONENT: Animated Empty State
+// ============================================
+function AnimatedEmpty({ searchText, selectedCat, onClear }) {
+  const floatAnim  = useRef(new Animated.Value(0)).current;
+  const fadeAnim   = useRef(new Animated.Value(0)).current;
+  const scaleAnim  = useRef(new Animated.Value(0.8)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue:         1,
+        duration:        400,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue:         1,
+        friction:        6,
+        tension:         40,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(floatAnim, {
+          toValue:         -14,
+          duration:        1800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(floatAnim, {
+          toValue:         0,
+          duration:        1800,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  return (
+    <Animated.View style={[
+      styles.emptyWrap,
+      { opacity: fadeAnim },
+    ]}>
+      <Animated.Text style={[
+        styles.emptyIcon,
+        {
+          transform: [
+            { scale: scaleAnim },
+            { translateY: floatAnim },
+          ],
+        },
+      ]}>
+        🌾
+      </Animated.Text>
+      <Text style={styles.emptyTitle}>
+        No Products Found
+      </Text>
+      <Text style={styles.emptySub}>
+        {searchText
+          ? `No results for "${searchText}"`
+          : 'No products available right now'}
+      </Text>
+      {(searchText || selectedCat !== 'All') && (
+        <TouchableOpacity
+          style={styles.clearBtn}
+          onPress={onClear}>
+          <Text style={styles.clearBtnText}>
+            Clear Filters
+          </Text>
+        </TouchableOpacity>
+      )}
+    </Animated.View>
+  );
+}
+
+// ============================================
+// SUB COMPONENT: Low Stock Pulse
+// ============================================
+function LowStockText({ quantity }) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue:         0.5,
+          duration:        800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue:         1,
+          duration:        800,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  return (
+    <Animated.Text style={[
+      styles.stockText,
+      styles.stockLow,
+      { opacity: pulseAnim },
+    ]}>
+      ⚠️ Only {quantity} left!
+    </Animated.Text>
+  );
+}
+
+// ============================================
+// SUB COMPONENT: Animated Product Card
+// ============================================
+function ProductCard({
+  item, cartQty, onAdd, onRemove, index,
+}) {
+  const scaleAnim  = useRef(new Animated.Value(1)).current;
+  const fadeAnim   = useRef(new Animated.Value(0)).current;
+  const slideAnim  = useRef(new Animated.Value(30)).current;
+  const addBounce  = useRef(new Animated.Value(1)).current;
+
+  // Stagger entrance
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue:         1,
+        duration:        350,
+        delay:           index * 60,
+        useNativeDriver: true,
+      }),
+      Animated.spring(slideAnim, {
+        toValue:         0,
+        friction:        8,
+        tension:         50,
+        delay:           index * 60,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  // Card press animations
+  const onPressIn  = () => {
+    Animated.spring(scaleAnim, {
+      toValue:         0.97,
+      friction:        8,
+      useNativeDriver: true,
+    }).start();
+  };
+  const onPressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue:         1,
+      friction:        5,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleAdd = useCallback(() => {
+    haptic('light');
+    // Add bounce
+    Animated.sequence([
+      Animated.spring(addBounce, {
+        toValue:         0.88,
+        friction:        4,
+        useNativeDriver: true,
+      }),
+      Animated.spring(addBounce, {
+        toValue:         1,
+        friction:        4,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    // Card scale
+    Animated.sequence([
+      Animated.spring(scaleAnim, {
+        toValue:         0.95,
         friction:        4,
         useNativeDriver: true,
       }),
@@ -68,175 +347,193 @@ function ProductCard({ item, cartQty, onAdd, onRemove }) {
         useNativeDriver: true,
       }),
     ]).start();
-    Haptics.impactAsync(
-      Haptics.ImpactFeedbackStyle.Light
-    ).catch(() => {});
     onAdd(item);
   }, [item, onAdd]);
 
   const handleRemove = useCallback(() => {
-    Haptics.impactAsync(
-      Haptics.ImpactFeedbackStyle.Light
-    ).catch(() => {});
+    haptic('light');
     onRemove(item.id);
   }, [item.id, onRemove]);
 
   const isOutOfStock = item.quantity === 0;
+  const isLowStock   = item.quantity > 0 &&
+    item.quantity < 10;
 
   return (
     <Animated.View style={[
       styles.productCard,
       cartQty > 0 && styles.productCardInCart,
-      { transform: [{ scale: scaleAnim }] },
+      {
+        opacity:   fadeAnim,
+        transform: [
+          { translateY: slideAnim },
+          { scale: scaleAnim },
+        ],
+      },
     ]}>
+      <TouchableOpacity
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        activeOpacity={1}
+        onPress={handleAdd}
+        disabled={isOutOfStock}>
 
-      {/* Image */}
-      <View style={styles.productImgWrap}>
-        {item.image_url ? (
-          <Image
-            source={{ uri: item.image_url }}
-            style={styles.productImg}
-            resizeMode="cover"
-          />
-        ) : (
-          <View style={styles.productImgPlaceholder}>
-            <Text style={styles.productImgEmoji}>
-              🌾
-            </Text>
-          </View>
-        )}
-
-        {/* Badges */}
-        {cartQty > 0 && (
-          <View style={styles.inCartBadge}>
-            <Text style={styles.inCartBadgeText}>
-              ✓ {cartQty} in cart
-            </Text>
-          </View>
-        )}
-
-        {isOutOfStock && (
-          <View style={styles.outOfStockBadge}>
-            <Text style={styles.outOfStockText}>
-              Out of Stock
-            </Text>
-          </View>
-        )}
-
-        {/* Market type badge */}
-        <View style={[
-          styles.marketTypeBadge,
-          item.market_type === 'wholesale'
-            ? styles.wholesaleBadge
-            : styles.retailBadge,
-        ]}>
-          <Text style={styles.marketTypeBadgeText}>
-            {item.market_type === 'wholesale'
-              ? '📦 Wholesale'
-              : '🛒 Retail'}
-          </Text>
-        </View>
-      </View>
-
-      {/* Info */}
-      <View style={styles.productInfo}>
-        <Text
-          style={styles.productName}
-          numberOfLines={2}>
-          {item.name}
-        </Text>
-
-        {item.description ? (
-          <Text
-            style={styles.productDesc}
-            numberOfLines={2}>
-            {item.description}
-          </Text>
-        ) : null}
-
-        {/* Location */}
-        {(item.barangay || item.municipality) && (
-          <Text style={styles.productLocation}>
-            📍 {[item.barangay, item.municipality]
-              .filter(Boolean).join(', ')}
-          </Text>
-        )}
-
-        {/* Price & Unit */}
-        <View style={styles.priceRow}>
-          <Text style={styles.productPrice}>
-            ₱{item.price}
-          </Text>
-          <Text style={styles.productUnit}>
-            /{item.unit}
-          </Text>
-        </View>
-
-        {/* Stock */}
-        <Text style={[
-          styles.stockText,
-          item.quantity < 10 && styles.stockLow,
-        ]}>
-          {isOutOfStock
-            ? '❌ Out of stock'
-            : item.quantity < 10
-              ? `⚠️ Only ${item.quantity} left`
-              : `✅ ${item.quantity} available`}
-        </Text>
-
-        {/* Rating */}
-        {item.rating > 0 && (
-          <View style={styles.ratingRow}>
-            <Text style={styles.ratingStar}>⭐</Text>
-            <Text style={styles.ratingText}>
-              {item.rating.toFixed(1)}
-            </Text>
-            {item.total_reviews > 0 && (
-              <Text style={styles.ratingCount}>
-                ({item.total_reviews})
+        {/* Image */}
+        <View style={styles.productImgWrap}>
+          {item.image_url ? (
+            <Image
+              source={{ uri: item.image_url }}
+              style={styles.productImg}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={styles.productImgPlaceholder}>
+              <Text style={styles.productImgEmoji}>
+                🌾
               </Text>
+            </View>
+          )}
+
+          {/* In cart badge */}
+          {cartQty > 0 && (
+            <View style={styles.inCartBadge}>
+              <Text style={styles.inCartBadgeText}>
+                ✓ {cartQty} in cart
+              </Text>
+            </View>
+          )}
+
+          {/* Out of stock overlay */}
+          {isOutOfStock && (
+            <View style={styles.outOfStockBadge}>
+              <Text style={styles.outOfStockText}>
+                Out of Stock
+              </Text>
+            </View>
+          )}
+
+          {/* Market type badge */}
+          <View style={[
+            styles.marketTypeBadge,
+            item.market_type === 'wholesale'
+              ? styles.wholesaleBadge
+              : styles.retailBadge,
+          ]}>
+            <Text style={styles.marketTypeBadgeText}>
+              {item.market_type === 'wholesale'
+                ? '📦 Wholesale'
+                : '🛒 Retail'}
+            </Text>
+          </View>
+        </View>
+
+        {/* Info */}
+        <View style={styles.productInfo}>
+          <Text
+            style={styles.productName}
+            numberOfLines={2}>
+            {item.name}
+          </Text>
+
+          {item.description ? (
+            <Text
+              style={styles.productDesc}
+              numberOfLines={1}>
+              {item.description}
+            </Text>
+          ) : null}
+
+          {(item.barangay || item.municipality) && (
+            <Text style={styles.productLocation}>
+              📍 {[item.barangay, item.municipality]
+                .filter(Boolean).join(', ')}
+            </Text>
+          )}
+
+          <View style={styles.priceRow}>
+            <Text style={styles.productPrice}>
+              ₱{item.price}
+            </Text>
+            <Text style={styles.productUnit}>
+              /{item.unit}
+            </Text>
+          </View>
+
+          {/* Stock status */}
+          {isLowStock ? (
+            <LowStockText quantity={item.quantity} />
+          ) : !isOutOfStock ? (
+            <Text style={styles.stockText}>
+              ✅ {item.quantity} available
+            </Text>
+          ) : null}
+
+          {/* Rating */}
+          {item.rating > 0 && (
+            <View style={styles.ratingRow}>
+              <Text style={styles.ratingStar}>⭐</Text>
+              <Text style={styles.ratingText}>
+                {item.rating.toFixed(1)}
+              </Text>
+              {item.total_reviews > 0 && (
+                <Text style={styles.ratingCount}>
+                  ({item.total_reviews})
+                </Text>
+              )}
+            </View>
+          )}
+
+          {/* Action buttons */}
+          <View style={styles.actionRow}>
+            {cartQty > 0 ? (
+              <>
+                <TouchableOpacity
+                  style={styles.removeBtn}
+                  onPress={handleRemove}
+                  activeOpacity={0.8}>
+                  <Text style={styles.removeBtnText}>
+                    🗑️
+                  </Text>
+                </TouchableOpacity>
+                <Animated.View style={[
+                  styles.addMoreBtnWrap,
+                  { transform: [{ scale: addBounce }] },
+                ]}>
+                  <TouchableOpacity
+                    style={styles.addMoreBtn}
+                    onPress={handleAdd}
+                    disabled={isOutOfStock}
+                    activeOpacity={0.85}>
+                    <Text style={styles.addMoreBtnText}>
+                      + Add More
+                    </Text>
+                  </TouchableOpacity>
+                </Animated.View>
+              </>
+            ) : (
+              <Animated.View style={[
+                styles.addBtnWrap,
+                { transform: [{ scale: addBounce }] },
+              ]}>
+                <TouchableOpacity
+                  style={[
+                    styles.addBtn,
+                    isOutOfStock && styles.addBtnDisabled,
+                  ]}
+                  onPress={handleAdd}
+                  disabled={isOutOfStock}
+                  activeOpacity={0.85}>
+                  <Text style={styles.addBtnText}>
+                    {isOutOfStock
+                      ? 'Out of Stock'
+                      : '+ Add to Cart'}
+                  </Text>
+                </TouchableOpacity>
+              </Animated.View>
             )}
           </View>
-        )}
-
-        {/* Action buttons */}
-        <View style={styles.actionRow}>
-          {cartQty > 0 ? (
-            <>
-              <TouchableOpacity
-                style={styles.removeBtn}
-                onPress={handleRemove}
-                activeOpacity={0.8}>
-                <Text style={styles.removeBtnText}>
-                  🗑️
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.addMoreBtn}
-                onPress={handleAdd}
-                disabled={isOutOfStock}
-                activeOpacity={0.85}>
-                <Text style={styles.addMoreBtnText}>
-                  + Add More
-                </Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity
-              style={[
-                styles.addBtn,
-                isOutOfStock && styles.addBtnDisabled,
-              ]}
-              onPress={handleAdd}
-              disabled={isOutOfStock}
-              activeOpacity={0.85}>
-              <Text style={styles.addBtnText}>
-                {isOutOfStock ? 'Out of Stock' : '+ Add to Cart'}
-              </Text>
-            </TouchableOpacity>
-          )}
         </View>
-      </View>
+      </TouchableOpacity>
     </Animated.View>
   );
 }
@@ -251,17 +548,14 @@ export default function MarketScreen({
   onCartUpdate,
   onGoToDashboard,
 }) {
-  const [products, setProducts]     = useState([]);
-  const [loading, setLoading]       = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [products, setProducts]       = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [refreshing, setRefreshing]   = useState(false);
   const [selectedCat, setSelectedCat] = useState('All');
-  const [searchText, setSearchText] = useState('');
-  const [cart, setCart]             = useState([]);
-  const [showCart, setShowCart]     = useState(false);
-
-  // Cart animation
-  const cartBounce = useRef(new Animated.Value(1)).current;
-  const cartAnim   = useRef(new Animated.Value(0)).current;
+  const [searchText, setSearchText]   = useState('');
+  const [cart, setCart]               = useState([]);
+  const [showCart, setShowCart]       = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
 
   const {
     persistedCart,
@@ -270,24 +564,53 @@ export default function MarketScreen({
     setCartCount,
   } = useAppContext();
 
-  // ── RESTORE CART ────────────────────────────
+  // ── ANIMATION REFS ────────────────────────
+  const screenFade   = useRef(new Animated.Value(0)).current;
+  const headerSlide  = useRef(new Animated.Value(-20)).current;
+  const headerFade   = useRef(new Animated.Value(0)).current;
+  const cartBounce   = useRef(new Animated.Value(1)).current;
+  const cartAnim     = useRef(new Animated.Value(0)).current;
+  const searchBorder = useRef(new Animated.Value(0)).current;
+
+  // ── ENTRANCE ANIMATION ────────────────────
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(screenFade, {
+        toValue:         1,
+        duration:        400,
+        useNativeDriver: true,
+      }),
+      Animated.timing(headerFade, {
+        toValue:         1,
+        duration:        500,
+        useNativeDriver: true,
+      }),
+      Animated.spring(headerSlide, {
+        toValue:         0,
+        friction:        8,
+        tension:         50,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  // ── RESTORE CART ──────────────────────────
   useEffect(() => {
     if (!cartLoaded) return;
     const marketCart = persistedCart.filter(
       i => i.order_type === 'market' || i.product_id
     );
-    if (marketCart.length > 0) {
-      setCart(marketCart);
-    }
+    if (marketCart.length > 0) setCart(marketCart);
   }, [cartLoaded]);
 
-  // ── CART ANIMATION ───────────────────────────
-  useEffect(() => {
-    const count = cart.reduce(
-      (s, i) => s + i.quantity, 0
-    );
+  // ── CART ANIMATION ────────────────────────
+  const cartCount = useMemo(() =>
+    cart.reduce((s, i) => s + i.quantity, 0),
+    [cart]
+  );
 
-    if (count > 0) {
+  useEffect(() => {
+    if (cartCount > 0) {
       Animated.sequence([
         Animated.spring(cartBounce, {
           toValue:         1.3,
@@ -301,20 +624,38 @@ export default function MarketScreen({
         }),
       ]).start();
     }
-
     Animated.spring(cartAnim, {
-      toValue:         count > 0 ? 1 : 0,
+      toValue:         cartCount > 0 ? 1 : 0,
       friction:        8,
       useNativeDriver: true,
     }).start();
+    onCartUpdate?.(cartCount);
+    setCartCount(cartCount);
+  }, [cartCount]);
 
-    // Update global cart count
-    onCartUpdate?.(count);
-    setCartCount(count);
+  // ── SEARCH FOCUS ANIMATION ────────────────
+  const onSearchFocus = () => {
+    setSearchFocused(true);
+    Animated.timing(searchBorder, {
+      toValue:         1,
+      duration:        200,
+      useNativeDriver: false,
+    }).start();
+  };
+  const onSearchBlur = () => {
+    setSearchFocused(false);
+    Animated.timing(searchBorder, {
+      toValue:         0,
+      duration:        200,
+      useNativeDriver: false,
+    }).start();
+  };
+  const searchBorderColor = searchBorder.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [colors.border, colors.farmerColor],
+  });
 
-  }, [cart]);
-
-  // ── FETCH PRODUCTS ───────────────────────────
+  // ── FETCH PRODUCTS ────────────────────────
   const fetchProducts = useCallback(async () => {
     try {
       const res = await axios.get(
@@ -326,7 +667,9 @@ export default function MarketScreen({
       );
       setProducts(res.data || []);
     } catch (err) {
-      if (__DEV__) console.log('Products error:', err?.message);
+      if (__DEV__) console.log(
+        'Products error:', err?.message
+      );
       setProducts([]);
       showToast(
         'error',
@@ -348,12 +691,10 @@ export default function MarketScreen({
     await fetchProducts();
   }, [fetchProducts]);
 
-  // ── CART FUNCTIONS ───────────────────────────
+  // ── CART FUNCTIONS ────────────────────────
   const addToCart = useCallback((item) => {
     setCart(prev => {
-      const existing = prev.find(
-        c => c.id === item.id
-      );
+      const existing = prev.find(c => c.id === item.id);
       let updated;
       if (existing) {
         updated = prev.map(c =>
@@ -387,12 +728,7 @@ export default function MarketScreen({
     saveCart([]);
   }, [saveCart]);
 
-  // ── COMPUTED (memoized) ──────────────────────
-  const cartCount = useMemo(() =>
-    cart.reduce((s, i) => s + i.quantity, 0),
-    [cart]
-  );
-
+  // ── COMPUTED ──────────────────────────────
   const cartTotal = useMemo(() =>
     cart.reduce(
       (s, i) => s + i.price * i.quantity, 0
@@ -400,8 +736,8 @@ export default function MarketScreen({
     [cart]
   );
 
-  const filteredProducts = useMemo(() => {
-    return products.filter(p => {
+  const filteredProducts = useMemo(() =>
+    products.filter(p => {
       const matchCat = selectedCat === 'All' ||
         p.category === selectedCat;
       const matchSearch = !searchText.trim() ||
@@ -412,27 +748,32 @@ export default function MarketScreen({
           searchText.toLowerCase()
         );
       return matchCat && matchSearch;
-    });
-  }, [products, selectedCat, searchText]);
+    }),
+    [products, selectedCat, searchText]
+  );
 
-  // ── RENDER PRODUCT ───────────────────────────
-  const renderProduct = useCallback(({ item }) => {
-    const cartItem = cart.find(c => c.id === item.id);
-    return (
-      <ProductCard
-        item={item}
-        cartQty={cartItem?.quantity || 0}
-        onAdd={addToCart}
-        onRemove={removeFromCart}
-      />
-    );
-  }, [cart, addToCart, removeFromCart]);
+  // ── RENDER PRODUCT ────────────────────────
+  const renderProduct = useCallback(
+    ({ item, index }) => {
+      const cartItem = cart.find(c => c.id === item.id);
+      return (
+        <ProductCard
+          item={item}
+          cartQty={cartItem?.quantity || 0}
+          onAdd={addToCart}
+          onRemove={removeFromCart}
+          index={index}
+        />
+      );
+    },
+    [cart, addToCart, removeFromCart]
+  );
 
   const keyExtractor = useCallback(
     (item) => item.id.toString(), []
   );
 
-  // ── CART SCREEN ──────────────────────────────
+  // ── CART SCREEN ───────────────────────────
   if (showCart) {
     return (
       <CartScreen
@@ -453,16 +794,36 @@ export default function MarketScreen({
     );
   }
 
-  // ── MAIN RENDER ──────────────────────────────
+  // ── SKELETON GRID ─────────────────────────
+  const SkeletonGrid = () => (
+    <View style={styles.skeletonGrid}>
+      {[1, 2, 3, 4, 5, 6].map(i => (
+        <SkeletonProductCard key={i} />
+      ))}
+    </View>
+  );
+
+  // ============================================
+  // RENDER
+  // ============================================
   return (
-    <View style={styles.container}>
+    <Animated.View style={[
+      styles.container,
+      { opacity: screenFade },
+    ]}>
       <StatusBar
         backgroundColor={colors.dark}
         barStyle="light-content"
       />
 
-      {/* HEADER */}
-      <View style={styles.header}>
+      {/* ── HEADER ────────────────────────── */}
+      <Animated.View style={[
+        styles.header,
+        {
+          opacity:   headerFade,
+          transform: [{ translateY: headerSlide }],
+        },
+      ]}>
         <View style={styles.headerTop}>
           <TouchableOpacity
             style={styles.backBtn}
@@ -515,11 +876,14 @@ export default function MarketScreen({
             </Text>
           </TouchableOpacity>
         )}
-      </View>
+      </Animated.View>
 
-      {/* SEARCH */}
+      {/* ── SEARCH ────────────────────────── */}
       <View style={styles.searchWrap}>
-        <View style={styles.searchBar}>
+        <Animated.View style={[
+          styles.searchBar,
+          { borderColor: searchBorderColor },
+        ]}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
             style={styles.searchInput}
@@ -527,6 +891,8 @@ export default function MarketScreen({
             placeholderTextColor={colors.textMuted}
             value={searchText}
             onChangeText={setSearchText}
+            onFocus={onSearchFocus}
+            onBlur={onSearchBlur}
             returnKeyType="search"
             autoCorrect={false}
           />
@@ -537,44 +903,27 @@ export default function MarketScreen({
               <Text style={styles.searchClear}>✕</Text>
             </TouchableOpacity>
           )}
-        </View>
+        </Animated.View>
       </View>
 
-      {/* CATEGORIES */}
+      {/* ── CATEGORIES ────────────────────── */}
       <View style={styles.catWrap}>
-        <FlatList
+        <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          data={CATEGORIES}
-          keyExtractor={(item) => item}
-          contentContainerStyle={styles.catList}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[
-                styles.catChip,
-                selectedCat === item &&
-                styles.catChipActive,
-              ]}
-              onPress={() => {
-                Haptics.impactAsync(
-                  Haptics.ImpactFeedbackStyle.Light
-                ).catch(() => {});
-                setSelectedCat(item);
-              }}
-              activeOpacity={0.8}>
-              <Text style={[
-                styles.catChipText,
-                selectedCat === item &&
-                styles.catChipTextActive,
-              ]}>
-                {item}
-              </Text>
-            </TouchableOpacity>
-          )}
-        />
+          contentContainerStyle={styles.catList}>
+          {CATEGORIES.map((cat) => (
+            <CategoryChip
+              key={cat}
+              label={cat}
+              active={selectedCat === cat}
+              onPress={() => setSelectedCat(cat)}
+            />
+          ))}
+        </ScrollView>
       </View>
 
-      {/* RESULTS COUNT */}
+      {/* ── RESULTS COUNT ─────────────────── */}
       {!loading && (
         <View style={styles.resultsRow}>
           <Text style={styles.resultsText}>
@@ -592,17 +941,15 @@ export default function MarketScreen({
         </View>
       )}
 
-      {/* PRODUCT LIST */}
+      {/* ── PRODUCT LIST OR SKELETON ──────── */}
       {loading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator
-            size="large"
-            color={colors.farmerColor}
-          />
-          <Text style={styles.loadingText}>
-            Loading products...
-          </Text>
-        </View>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{
+            paddingBottom: 30,
+          }}>
+          <SkeletonGrid />
+        </ScrollView>
       ) : (
         <FlatList
           data={filteredProducts}
@@ -625,34 +972,19 @@ export default function MarketScreen({
             />
           }
           ListEmptyComponent={
-            <View style={styles.emptyWrap}>
-              <Text style={styles.emptyIcon}>🌾</Text>
-              <Text style={styles.emptyTitle}>
-                No Products Found
-              </Text>
-              <Text style={styles.emptySub}>
-                {searchText
-                  ? `No results for "${searchText}"`
-                  : 'No products available right now'}
-              </Text>
-              {(searchText || selectedCat !== 'All') && (
-                <TouchableOpacity
-                  style={styles.clearBtn}
-                  onPress={() => {
-                    setSearchText('');
-                    setSelectedCat('All');
-                  }}>
-                  <Text style={styles.clearBtnText}>
-                    Clear Filters
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            <AnimatedEmpty
+              searchText={searchText}
+              selectedCat={selectedCat}
+              onClear={() => {
+                setSearchText('');
+                setSelectedCat('All');
+              }}
+            />
           }
         />
       )}
 
-      {/* FLOATING CART */}
+      {/* ── FLOATING CART ─────────────────── */}
       <Animated.View style={[
         styles.floatingCartWrap,
         {
@@ -699,7 +1031,7 @@ export default function MarketScreen({
         </TouchableOpacity>
       </Animated.View>
 
-    </View>
+    </Animated.View>
   );
 }
 
@@ -713,11 +1045,59 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
 
+  // ── SKELETON ────────────────────────────────
+  skeletonGrid: {
+    flexDirection:  'row',
+    flexWrap:       'wrap',
+    padding:        12,
+    gap:            12,
+  },
+  skeletonCard: {
+    width:           '47%',
+    backgroundColor: colors.cardBackground,
+    borderRadius:    borderRadius.xlarge,
+    overflow:        'hidden',
+    borderWidth:     1,
+    borderColor:     colors.border,
+    marginBottom:    0,
+  },
+  skeletonImg: {
+    height:          140,
+    backgroundColor: colors.inputBackground,
+  },
+  skeletonBody: {
+    padding: 12,
+    gap:     8,
+  },
+  skeletonLine1: {
+    height:          14,
+    width:           '80%',
+    backgroundColor: colors.inputBackground,
+    borderRadius:    4,
+  },
+  skeletonLine2: {
+    height:          10,
+    width:           '60%',
+    backgroundColor: colors.inputBackground,
+    borderRadius:    4,
+  },
+  skeletonPrice: {
+    height:          20,
+    width:           '50%',
+    backgroundColor: colors.inputBackground,
+    borderRadius:    4,
+  },
+  skeletonBtn: {
+    height:          36,
+    backgroundColor: colors.inputBackground,
+    borderRadius:    borderRadius.large,
+  },
+
   // ── HEADER ──────────────────────────────────
   header: {
-    backgroundColor:  colors.dark,
-    paddingTop:       52,
-    paddingBottom:    16,
+    backgroundColor:   colors.dark,
+    paddingTop:        52,
+    paddingBottom:     16,
     paddingHorizontal: 20,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderGold,
@@ -763,17 +1143,17 @@ const styles = StyleSheet.create({
   },
   cartBtnIcon: { fontSize: 18 },
   cartBadge: {
-    position:        'absolute',
-    top:             -4,
-    right:           -4,
-    minWidth:        18,
-    height:          18,
-    borderRadius:    9,
-    backgroundColor: colors.danger,
-    alignItems:      'center',
-    justifyContent:  'center',
-    borderWidth:     1.5,
-    borderColor:     colors.cardBackground,
+    position:          'absolute',
+    top:               -4,
+    right:             -4,
+    minWidth:          18,
+    height:            18,
+    borderRadius:      9,
+    backgroundColor:   colors.danger,
+    alignItems:        'center',
+    justifyContent:    'center',
+    borderWidth:       1.5,
+    borderColor:       colors.cardBackground,
     paddingHorizontal: 3,
   },
   cartBadgeText: {
@@ -782,9 +1162,9 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   headerTitle: {
-    color:      colors.textWhite,
-    fontSize:   26,
-    fontWeight: '900',
+    color:        colors.textWhite,
+    fontSize:     26,
+    fontWeight:   '900',
     marginBottom: 4,
   },
   headerSub: {
@@ -792,14 +1172,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   dashShortcut: {
-    marginTop:       10,
-    backgroundColor: colors.farmerBg,
+    marginTop:         10,
+    backgroundColor:   colors.farmerBg,
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius:    borderRadius.large,
-    alignSelf:       'flex-start',
-    borderWidth:     1,
-    borderColor:     colors.farmerBorder,
+    paddingVertical:   8,
+    borderRadius:      borderRadius.large,
+    alignSelf:         'flex-start',
+    borderWidth:       1,
+    borderColor:       colors.farmerBorder || colors.border,
   },
   dashShortcutText: {
     color:      colors.farmerColor,
@@ -816,15 +1196,14 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   searchBar: {
-    backgroundColor: colors.inputBackground,
-    borderRadius:    borderRadius.large,
+    backgroundColor:   colors.inputBackground,
+    borderRadius:      borderRadius.large,
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection:   'row',
-    alignItems:      'center',
-    borderWidth:     1,
-    borderColor:     colors.border,
-    gap:             10,
+    paddingVertical:   12,
+    flexDirection:     'row',
+    alignItems:        'center',
+    borderWidth:       1.5,
+    gap:               10,
   },
   searchIcon:  { fontSize: 16 },
   searchInput: {
@@ -907,14 +1286,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // ── PRODUCT LIST ────────────────────────────
+  // ── PRODUCT GRID ────────────────────────────
   productList: {
     padding:       12,
     paddingBottom: 120,
   },
-  columnWrapper: {
-    gap: 12,
-  },
+  columnWrapper: { gap: 12 },
 
   // ── PRODUCT CARD ────────────────────────────
   productCard: {
@@ -935,10 +1312,7 @@ const styles = StyleSheet.create({
     height:   140,
     position: 'relative',
   },
-  productImg: {
-    width:  '100%',
-    height: '100%',
-  },
+  productImg: { width: '100%', height: '100%' },
   productImgPlaceholder: {
     width:           '100%',
     height:          '100%',
@@ -948,13 +1322,13 @@ const styles = StyleSheet.create({
   },
   productImgEmoji: { fontSize: 44 },
   inCartBadge: {
-    position:        'absolute',
-    top:             8,
-    left:            8,
-    backgroundColor: colors.farmerColor,
+    position:          'absolute',
+    top:               8,
+    left:              8,
+    backgroundColor:   colors.farmerColor,
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius:    borderRadius.round,
+    paddingVertical:   3,
+    borderRadius:      borderRadius.round,
   },
   inCartBadgeText: {
     color:      colors.textWhite,
@@ -977,19 +1351,15 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   marketTypeBadge: {
-    position:        'absolute',
-    bottom:          8,
-    right:           8,
+    position:          'absolute',
+    bottom:            8,
+    right:             8,
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius:    borderRadius.round,
+    paddingVertical:   3,
+    borderRadius:      borderRadius.round,
   },
-  wholesaleBadge: {
-    backgroundColor: colors.riderBg,
-  },
-  retailBadge: {
-    backgroundColor: colors.farmerBg,
-  },
+  wholesaleBadge: { backgroundColor: colors.riderBg  },
+  retailBadge:    { backgroundColor: colors.farmerBg },
   marketTypeBadgeText: {
     fontSize:   9,
     fontWeight: '800',
@@ -1031,8 +1401,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   stockText: {
-    color:    colors.success,
-    fontSize: 9,
+    color:      colors.success,
+    fontSize:   9,
     fontWeight: '600',
   },
   stockLow: { color: colors.warning },
@@ -1057,6 +1427,8 @@ const styles = StyleSheet.create({
     gap:           6,
     marginTop:     8,
   },
+  addBtnWrap:    { flex: 1 },
+  addMoreBtnWrap: { flex: 1 },
   addBtn: {
     flex:            1,
     backgroundColor: colors.farmerColor,
@@ -1075,13 +1447,13 @@ const styles = StyleSheet.create({
     fontSize:   11,
   },
   removeBtn: {
-    backgroundColor: colors.dangerPale,
-    paddingVertical: 10,
+    backgroundColor:  colors.dangerPale,
+    paddingVertical:  10,
     paddingHorizontal: 12,
-    borderRadius:    borderRadius.large,
-    alignItems:      'center',
-    borderWidth:     1,
-    borderColor:     colors.danger + '30',
+    borderRadius:     borderRadius.large,
+    alignItems:       'center',
+    borderWidth:      1,
+    borderColor:      colors.danger + '30',
   },
   removeBtnText: { fontSize: 14 },
   addMoreBtn: {
@@ -1099,10 +1471,10 @@ const styles = StyleSheet.create({
 
   // ── EMPTY ───────────────────────────────────
   emptyWrap: {
-    alignItems:      'center',
-    paddingVertical: 60,
+    alignItems:        'center',
+    paddingVertical:   60,
     paddingHorizontal: 40,
-    gap:             10,
+    gap:               10,
   },
   emptyIcon: { fontSize: 60 },
   emptyTitle: {
@@ -1111,19 +1483,19 @@ const styles = StyleSheet.create({
     color:      colors.textDark,
   },
   emptySub: {
-    fontSize:  13,
-    color:     colors.textLight,
-    textAlign: 'center',
+    fontSize:   13,
+    color:      colors.textLight,
+    textAlign:  'center',
     lineHeight: 20,
   },
   clearBtn: {
-    backgroundColor: colors.primaryPale,
+    backgroundColor:   colors.primaryPale,
     paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius:    borderRadius.large,
-    borderWidth:     1,
-    borderColor:     colors.borderGold,
-    marginTop:       8,
+    paddingVertical:   10,
+    borderRadius:      borderRadius.large,
+    borderWidth:       1,
+    borderColor:       colors.borderGold,
+    marginTop:         8,
   },
   clearBtnText: {
     color:      colors.primary,

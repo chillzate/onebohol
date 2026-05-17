@@ -75,8 +75,8 @@ function ScreenRouter() {
     setCartCount,
     pendingNavigation,
     setPendingNavigation,
+    authLoaded,          // ← ADD THIS!
   } = useAppContext();
-  useOTA();
 
   const {
     appReady,
@@ -149,18 +149,20 @@ function ScreenRouter() {
   }
 
   // ── LOADING ─────────────────────────────────
-  if (!appReady || screen === 'loading') {
-    return (
-      <LoadingScreen
-        showRetry={showRetry}
-        onRetry={() => {
-          setAppReady(false);
-          setShowRetry(false);
-          prepareApp();
-        }}
-      />
-    );
-  }
+  if (!appReady || screen === 'loading' || !authLoaded) {
+  //                                   ↑ ADD THIS!
+  //                     Wait for SecureStore to load!
+  return (
+    <LoadingScreen
+      showRetry={showRetry}
+      onRetry={() => {
+        setAppReady(false);
+        setShowRetry(false);
+        prepareApp();
+      }}
+    />
+  );
+}
 
   // ── COMING SOON ─────────────────────────────
   if (COMING_SOON.includes(screen)) {

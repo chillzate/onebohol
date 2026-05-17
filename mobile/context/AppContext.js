@@ -30,15 +30,13 @@ export function AppProvider({ children }) {
   const [profileImage, setProfileImage] = useState(null);
 
   // ── APP STATE ───────────────────────────────
-  const [screen, setScreen]       = useState('loading');
-  const [cartCount, setCartCount] = useState(0);
-  const [location, setLocation]   = useState(null);
+  const [screen, setScreen]         = useState('loading');
+  const [authLoaded, setAuthLoaded] = useState(false);
+  const [cartCount, setCartCount]   = useState(0);
+  const [location, setLocation]     = useState(null);
 
   // ✅ DEEP LINK NAVIGATION STATE
-  // When notification is tapped, this tells
-  // App.js where to navigate
-  const [pendingNavigation, setPendingNavigation] =
-    useState(null);
+  const [pendingNavigation, setPendingNavigation] = useState(null);
 
   // ── CART STATE ──────────────────────────────
   const [persistedCart, setPersistedCart] = useState([]);
@@ -49,15 +47,11 @@ export function AppProvider({ children }) {
 
   const loadCart = useCallback(async () => {
     try {
-      const stored = await AsyncStorage.getItem(
-        CART_STORAGE_KEY
-      );
+      const stored = await AsyncStorage.getItem(CART_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
         setPersistedCart(parsed);
-        const total = parsed.reduce(
-          (s, i) => s + i.quantity, 0
-        );
+        const total = parsed.reduce((s, i) => s + i.quantity, 0);
         setCartCount(total);
       }
     } catch (err) {
@@ -120,12 +114,41 @@ export function AppProvider({ children }) {
       SecureStore.setItemAsync('userEmail', userEmail),
       SecureStore.setItemAsync('userPassword', password),
       SecureStore.setItemAsync('userName', user_name),
-      SecureStore.setItemAsync(
-        'userId', user_id.toString()
-      ),
+      SecureStore.setItemAsync('userId', user_id.toString()),
       SecureStore.setItemAsync('userRole', role),
     ]);
   }, []);
+     
+  // ✅ PInanatili ko ang bersyon na may mas detalyadong debug logs
+  const loadSavedAuth = useCallback(async () => {
+    try {
+      const savedId    = await SecureStore.getItemAsync('userId');
+      const savedRole  = await SecureStore.getItemAsync('userRole');
+      const savedName  = await SecureStore.getItemAsync('userName');
+      const savedEmail = await SecureStore.getItemAsync('userEmail');
+      const savedImage = await SecureStore.getItemAsync('profileImage');
+
+      if (savedId && savedRole) {
+        setUserId(parseInt(savedId));
+        setUserRole(savedRole);
+        setLoggedInUser(savedName || '');
+        setEmail(savedEmail || '');
+        if (savedImage) setProfileImage(savedImage);
+        console.log('✅ Session restored! userId:', savedId);
+      } else {
+        console.log('No saved session found');
+      }
+    } catch (err) {
+      console.log('Auth load error:', err?.message);
+    } finally {
+      setAuthLoaded(true);
+    }
+  }, []);
+
+  // ✅ Load saved auth when app starts!
+  useEffect(() => {
+    loadSavedAuth();
+  }, [loadSavedAuth]);
 
   // ── ROLE DATA ────────────────────────────────
   const roleData = useMemo(() => {
@@ -221,6 +244,7 @@ export function AppProvider({ children }) {
     profileImage, setProfileImage,
     setLoggedInUser, setUserId, setUserRole,
     setAuth, clearAuth,
+    authLoaded,
 
     // App
     screen, setScreen,
@@ -231,7 +255,7 @@ export function AppProvider({ children }) {
     persistedCart, setPersistedCart,
     cartLoaded, saveCart, clearPersistedCart,
 
-    // ✅ Deep link navigation
+    // Deep link
     pendingNavigation, setPendingNavigation,
 
     // Computed
@@ -245,6 +269,7 @@ export function AppProvider({ children }) {
     roleData, navTabs,
     setAuth, clearAuth,
     saveCart, clearPersistedCart,
+    authLoaded,
   ]);
 
   return (

@@ -1,9 +1,15 @@
 // ============================================
-// ZAVARA FOOD SCREEN - v4.0
-// ✅ clearCart bug fixed
-// ✅ Ratings optimized (no spam requests)
-// ✅ AbortController added
-// ✅ AppState listener added
+// ZAVARA FOOD SCREEN - v5.0
+// INSPIRED BY: GrabFood, Foodpanda, Gojek
+// Improvements over v4.0:
+// 1. Restaurant cards stagger slide up entrance
+// 2. Restaurant card scale press feedback
+// 3. Category chip scale pop on select
+// 4. Skeleton loading screen
+// 5. Empty state floating emoji animation
+// 6. Menu items stagger entrance
+// 7. Search bar expansion on focus
+// 8. Hero image parallax on scroll
 // ============================================
 import {
   useEffect,
@@ -49,131 +55,362 @@ const CATEGORIES = [
 ];
 
 // ============================================
-// RESTAURANT CARD - unchanged, already good
+// SUB COMPONENT: Skeleton Card (Loading state)
 // ============================================
-function RestaurantCard({ item, rating, onPress }) {
+function SkeletonCard() {
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmerAnim, {
+          toValue:         1,
+          duration:        900,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shimmerAnim, {
+          toValue:         0,
+          duration:        900,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  const opacity = shimmerAnim.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [0.4, 0.85],
+  });
+
   return (
-    <TouchableOpacity
-      style={styles.restaurantCard}
-      onPress={onPress}
-      activeOpacity={0.92}>
-      <View style={styles.restaurantImgWrap}>
-        {item.image_url ? (
-          <Image
-            source={{ uri: item.image_url }}
-            style={styles.restaurantImg}
-            resizeMode="cover"
-          />
-        ) : (
-          <View style={styles.restaurantImgPlaceholder}>
-            <Text style={styles.restaurantImgEmoji}>
-              🍴
-            </Text>
-          </View>
-        )}
-        <View style={styles.imgBadges}>
-          <View style={[
-            styles.statusBadge,
-            {
-              backgroundColor: item.is_open
-                ? colors.success
-                : colors.danger
-            },
-          ]}>
-            <Text style={styles.statusBadgeText}>
-              {item.is_open ? '● Open' : '● Closed'}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.catTag}>
-          <Text style={styles.catTagText}>
-            {item.category}
-          </Text>
-        </View>
+    <Animated.View style={[
+      styles.skeletonCard,
+      { opacity },
+    ]}>
+      <View style={styles.skeletonImg} />
+      <View style={styles.skeletonBody}>
+        <View style={styles.skeletonLine1} />
+        <View style={styles.skeletonLine2} />
+        <View style={styles.skeletonLine3} />
+        <View style={styles.skeletonMeta} />
+        <View style={styles.skeletonBtn} />
       </View>
-
-      <View style={styles.restaurantInfo}>
-        <View style={styles.restaurantNameRow}>
-          <Text
-            style={styles.restaurantName}
-            numberOfLines={1}>
-            {item.name}
-          </Text>
-          <View style={styles.ratingWrap}>
-            <Text style={styles.ratingStar}>⭐</Text>
-            <Text style={styles.ratingText}>
-              {rating?.avg > 0
-                ? rating.avg.toFixed(1)
-                : 'New'}
-            </Text>
-            {rating?.total > 0 && (
-              <Text style={styles.ratingCount}>
-                ({rating.total})
-              </Text>
-            )}
-          </View>
-        </View>
-
-        {item.description ? (
-          <Text
-            style={styles.restaurantDesc}
-            numberOfLines={1}>
-            {item.description}
-          </Text>
-        ) : null}
-
-        <Text
-          style={styles.restaurantAddress}
-          numberOfLines={1}>
-          📍 {item.address}
-        </Text>
-
-        <View style={styles.restaurantMetaRow}>
-          <View style={styles.restaurantMetaItem}>
-            <Text style={styles.restaurantMetaText}>
-              🛵 {item.delivery_range_km}km
-            </Text>
-          </View>
-          <View style={styles.restaurantMetaDivider} />
-          <View style={styles.restaurantMetaItem}>
-            <Text style={styles.restaurantMetaText}>
-              💰 ₱{item.delivery_fee}
-            </Text>
-          </View>
-          <View style={styles.restaurantMetaDivider} />
-          <View style={styles.restaurantMetaItem}>
-            <Text style={styles.restaurantMetaText}>
-              ⏱️ 30-45 min
-            </Text>
-          </View>
-        </View>
-
-        <TouchableOpacity
-          style={[
-            styles.restaurantOrderBtn,
-            !item.is_open && styles.restaurantOrderBtnClosed,
-          ]}
-          onPress={onPress}
-          activeOpacity={0.85}>
-          <Text style={styles.restaurantOrderBtnText}>
-            {item.is_open ? 'View Menu →' : 'See Menu'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
+    </Animated.View>
   );
 }
 
 // ============================================
-// MENU ITEM CARD - unchanged, already good
+// SUB COMPONENT: Animated Empty State
 // ============================================
-function MenuItemCard({ item, inCart, onAdd, onRemove }) {
+function AnimatedEmpty({ icon, title, sub, onClear }) {
+  const floatAnim  = useRef(new Animated.Value(0)).current;
+  const fadeAnim   = useRef(new Animated.Value(0)).current;
+  const scaleAnim  = useRef(new Animated.Value(0.8)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue:         1,
+        duration:        400,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue:         1,
+        friction:        6,
+        tension:         40,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(floatAnim, {
+          toValue:         -14,
+          duration:        1800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(floatAnim, {
+          toValue:         0,
+          duration:        1800,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  return (
+    <Animated.View style={[
+      styles.emptyWrap,
+      { opacity: fadeAnim },
+    ]}>
+      <Animated.Text style={[
+        styles.emptyIcon,
+        {
+          transform: [
+            { scale: scaleAnim },
+            { translateY: floatAnim },
+          ],
+        },
+      ]}>
+        {icon}
+      </Animated.Text>
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptySub}>{sub}</Text>
+      {onClear && (
+        <TouchableOpacity
+          style={styles.emptyBtn}
+          onPress={onClear}>
+          <Text style={styles.emptyBtnText}>
+            Clear Filters
+          </Text>
+        </TouchableOpacity>
+      )}
+    </Animated.View>
+  );
+}
+
+// ============================================
+// SUB COMPONENT: Animated Category Chip
+// ============================================
+function CategoryChip({ label, active, onPress, activeColor }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const handlePress = () => {
+    Animated.sequence([
+      Animated.spring(scaleAnim, {
+        toValue:         0.90,
+        friction:        8,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue:         1,
+        friction:        5,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    onPress();
+  };
+
+  return (
+    <Animated.View style={{
+      transform: [{ scale: scaleAnim }],
+    }}>
+      <TouchableOpacity
+        style={[
+          styles.catChip,
+          active && {
+            backgroundColor: activeColor || colors.cuisineColor,
+            borderColor:     activeColor || colors.cuisineColor,
+          },
+        ]}
+        onPress={handlePress}
+        activeOpacity={1}>
+        <Text style={[
+          styles.catChipText,
+          active && styles.catChipTextActive,
+        ]}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// ============================================
+// SUB COMPONENT: Animated Restaurant Card
+// ============================================
+function RestaurantCard({ item, rating, onPress, index }) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const fadeAnim  = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(40)).current;
+
+  // Stagger entrance
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue:         1,
+        duration:        400,
+        delay:           index * 100,
+        useNativeDriver: true,
+      }),
+      Animated.spring(slideAnim, {
+        toValue:         0,
+        friction:        8,
+        tension:         50,
+        delay:           index * 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  const onPressIn  = () => {
+    Animated.spring(scaleAnim, {
+      toValue:         0.97,
+      friction:        8,
+      useNativeDriver: true,
+    }).start();
+  };
+  const onPressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue:         1,
+      friction:        5,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <Animated.View style={[
+      styles.restaurantCard,
+      {
+        opacity:   fadeAnim,
+        transform: [
+          { translateY: slideAnim },
+          { scale: scaleAnim },
+        ],
+      },
+    ]}>
+      <TouchableOpacity
+        onPress={onPress}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        activeOpacity={1}>
+        <View style={styles.restaurantImgWrap}>
+          {item.image_url ? (
+            <Image
+              source={{ uri: item.image_url }}
+              style={styles.restaurantImg}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={styles.restaurantImgPlaceholder}>
+              <Text style={styles.restaurantImgEmoji}>
+                🍴
+              </Text>
+            </View>
+          )}
+          <View style={styles.imgBadges}>
+            <View style={[
+              styles.statusBadge,
+              {
+                backgroundColor: item.is_open
+                  ? colors.success : colors.danger,
+              },
+            ]}>
+              <Text style={styles.statusBadgeText}>
+                {item.is_open ? '● Open' : '● Closed'}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.catTag}>
+            <Text style={styles.catTagText}>
+              {item.category}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.restaurantInfo}>
+          <View style={styles.restaurantNameRow}>
+            <Text
+              style={styles.restaurantName}
+              numberOfLines={1}>
+              {item.name}
+            </Text>
+            <View style={styles.ratingWrap}>
+              <Text style={styles.ratingStar}>⭐</Text>
+              <Text style={styles.ratingText}>
+                {rating?.avg > 0
+                  ? rating.avg.toFixed(1) : 'New'}
+              </Text>
+              {rating?.total > 0 && (
+                <Text style={styles.ratingCount}>
+                  ({rating.total})
+                </Text>
+              )}
+            </View>
+          </View>
+
+          {item.description ? (
+            <Text
+              style={styles.restaurantDesc}
+              numberOfLines={1}>
+              {item.description}
+            </Text>
+          ) : null}
+
+          <Text
+            style={styles.restaurantAddress}
+            numberOfLines={1}>
+            📍 {item.address}
+          </Text>
+
+          <View style={styles.restaurantMetaRow}>
+            <View style={styles.restaurantMetaItem}>
+              <Text style={styles.restaurantMetaText}>
+                🛵 {item.delivery_range_km}km
+              </Text>
+            </View>
+            <View style={styles.restaurantMetaDivider} />
+            <View style={styles.restaurantMetaItem}>
+              <Text style={styles.restaurantMetaText}>
+                💰 ₱{item.delivery_fee}
+              </Text>
+            </View>
+            <View style={styles.restaurantMetaDivider} />
+            <View style={styles.restaurantMetaItem}>
+              <Text style={styles.restaurantMetaText}>
+                ⏱️ 30-45 min
+              </Text>
+            </View>
+          </View>
+
+          <View style={[
+            styles.restaurantOrderBtn,
+            !item.is_open &&
+            styles.restaurantOrderBtnClosed,
+          ]}>
+            <Text style={styles.restaurantOrderBtnText}>
+              {item.is_open ? 'View Menu →' : 'See Menu'}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// ============================================
+// SUB COMPONENT: Animated Menu Item Card
+// ============================================
+function MenuItemCard({
+  item, inCart, onAdd, onRemove, index,
+}) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const fadeAnim  = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(30)).current;
+
+  // Stagger entrance
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue:         1,
+        duration:        350,
+        delay:           index * 60,
+        useNativeDriver: true,
+      }),
+      Animated.spring(slideAnim, {
+        toValue:         0,
+        friction:        8,
+        tension:         50,
+        delay:           index * 60,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
 
   const handleAdd = useCallback(() => {
     Animated.sequence([
       Animated.spring(scaleAnim, {
-        toValue:         0.92,
+        toValue:         0.94,
         friction:        4,
         useNativeDriver: true,
       }),
@@ -190,7 +427,13 @@ function MenuItemCard({ item, inCart, onAdd, onRemove }) {
     <Animated.View style={[
       styles.menuCard,
       inCart && styles.menuCardInCart,
-      { transform: [{ scale: scaleAnim }] },
+      {
+        opacity:   fadeAnim,
+        transform: [
+          { translateY: slideAnim },
+          { scale: scaleAnim },
+        ],
+      },
     ]}>
       <View style={styles.menuCardLeft}>
         {inCart && (
@@ -262,20 +505,20 @@ function MenuItemCard({ item, inCart, onAdd, onRemove }) {
 // ============================================
 export default function FoodScreen({ userId, onBack }) {
 
-  const [restaurants, setRestaurants]     = useState([]);
+  const [restaurants, setRestaurants]   = useState([]);
   const [selectedRestaurant, setSelectedRestaurant] =
     useState(null);
-  const [menuItems, setMenuItems]         = useState([]);
-  const [loading, setLoading]             = useState(true);
-  const [menuLoading, setMenuLoading]     = useState(false);
-  const [refreshing, setRefreshing]       = useState(false);
+  const [menuItems, setMenuItems]       = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [menuLoading, setMenuLoading]   = useState(false);
+  const [refreshing, setRefreshing]     = useState(false);
   const [selectedCategory, setSelectedCategory] =
     useState('All');
   const [selectedMenuCat, setSelectedMenuCat] =
     useState('All');
-  const [cart, setCart]                   = useState([]);
-  const [showCart, setShowCart]           = useState(false);
-  const [searchText, setSearchText]       = useState('');
+  const [cart, setCart]                 = useState([]);
+  const [showCart, setShowCart]         = useState(false);
+  const [searchText, setSearchText]     = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [restaurantRatings, setRestaurantRatings] =
     useState({});
@@ -286,15 +529,17 @@ export default function FoodScreen({ userId, onBack }) {
     saveCart,
   } = useAppContext();
 
-  // ✅ Refs for cleanup
-  const headerAnim  = useRef(new Animated.Value(0)).current;
-  const cartBounce  = useRef(new Animated.Value(1)).current;
-  const cartAnim    = useRef(new Animated.Value(0)).current;
-  const mountedRef  = useRef(true);
-  const abortRef    = useRef(null);
-  const appStateRef = useRef(AppState.currentState);
+  // ── ANIMATION REFS ────────────────────────
+  const headerAnim   = useRef(new Animated.Value(0)).current;
+  const cartBounce   = useRef(new Animated.Value(1)).current;
+  const cartAnim     = useRef(new Animated.Value(0)).current;
+  const searchWidth  = useRef(new Animated.Value(0)).current;
+  const heroScrollY  = useRef(new Animated.Value(0)).current;
+  const mountedRef   = useRef(true);
+  const abortRef     = useRef(null);
+  const appStateRef  = useRef(AppState.currentState);
 
-  // ── RESTORE CART ────────────────────────────
+  // ── RESTORE CART ──────────────────────────
   useEffect(() => {
     if (cartLoaded && persistedCart.length > 0) {
       const foodCart = persistedCart.filter(
@@ -304,25 +549,23 @@ export default function FoodScreen({ userId, onBack }) {
     }
   }, [cartLoaded]);
 
-  // ✅ CLEAR CART - was missing before! FIXED!
+  // ── CLEAR CART ────────────────────────────
   const clearCart = useCallback(() => {
     setCart([]);
     saveCart([]);
   }, [saveCart]);
 
-  // ── STARTUP ─────────────────────────────────
+  // ── STARTUP ───────────────────────────────
   useEffect(() => {
     mountedRef.current = true;
-
     fetchRestaurants();
+
     Animated.timing(headerAnim, {
       toValue:         1,
       duration:        600,
       useNativeDriver: true,
     }).start();
 
-    // ✅ AppState listener - pause when background
-    // GRAB does this - saves battery!
     const appStateSub = AppState.addEventListener(
       'change',
       (nextState) => {
@@ -333,12 +576,16 @@ export default function FoodScreen({ userId, onBack }) {
     return () => {
       mountedRef.current = false;
       appStateSub.remove();
-      // ✅ Cancel any pending requests
       abortRef.current?.abort();
     };
   }, []);
 
-  // ── CART ANIMATION ───────────────────────────
+  // ── CART ANIMATION ────────────────────────
+  const cartCount = useMemo(() =>
+    cart.reduce((sum, i) => sum + i.quantity, 0),
+    [cart]
+  );
+
   useEffect(() => {
     if (cart.length > 0) {
       Animated.sequence([
@@ -361,11 +608,28 @@ export default function FoodScreen({ userId, onBack }) {
       tension:         40,
       useNativeDriver: true,
     }).start();
-  }, [cart.length]);
+  }, [cart.length, cartCount]);
 
-  // ── FETCH RESTAURANTS ───────────────────────
+  // ── SEARCH FOCUS ANIMATION ────────────────
+  const onSearchFocus = () => {
+    setSearchFocused(true);
+    Animated.timing(searchWidth, {
+      toValue:         1,
+      duration:        200,
+      useNativeDriver: false,
+    }).start();
+  };
+  const onSearchBlur = () => {
+    setSearchFocused(false);
+    Animated.timing(searchWidth, {
+      toValue:         0,
+      duration:        200,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  // ── FETCH RESTAURANTS ─────────────────────
   const fetchRestaurants = useCallback(async () => {
-    // ✅ AbortController - cancel old requests
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 
@@ -378,14 +642,9 @@ export default function FoodScreen({ userId, onBack }) {
         }
       );
       if (!mountedRef.current) return;
-
       const data = response.data || [];
       setRestaurants(data);
-
-      // ✅ FIXED: Fetch ratings lazily
-      // Don't hammer API - fetch 3 at a time
       fetchRatingsInBatches(data);
-
     } catch (err) {
       if (axios.isCancel(err)) return;
       if (!mountedRef.current) return;
@@ -408,9 +667,7 @@ export default function FoodScreen({ userId, onBack }) {
     await fetchRestaurants();
   }, [fetchRestaurants]);
 
-  // ✅ OPTIMIZED: Fetch ratings in batches of 3
-  // Old version fetched ALL at once = API spam!
-  // Shopee does batch fetching - we do same
+  // ── FETCH RATINGS IN BATCHES ──────────────
   const fetchRatingsInBatches = useCallback(
     async (list) => {
       const batchSize = 3;
@@ -418,7 +675,6 @@ export default function FoodScreen({ userId, onBack }) {
 
       for (let i = 0; i < list.length; i += batchSize) {
         if (!mountedRef.current) break;
-
         const batch = list.slice(i, i + batchSize);
         await Promise.allSettled(
           batch.map(async (r) => {
@@ -436,26 +692,24 @@ export default function FoodScreen({ userId, onBack }) {
             }
           })
         );
-
         if (mountedRef.current) {
           setRestaurantRatings(prev => ({
             ...prev,
             ...ratingMap,
           }));
         }
-
-        // Small delay between batches
         await new Promise(r => setTimeout(r, 200));
       }
     },
     []
   );
 
-  // ── FETCH MENU ──────────────────────────────
+  // ── FETCH MENU ────────────────────────────
   const fetchMenu = useCallback(async (restaurant) => {
     setSelectedRestaurant(restaurant);
     setSelectedMenuCat('All');
     setMenuLoading(true);
+    heroScrollY.setValue(0);
     try {
       const response = await axios.get(
         `${API_URL}/restaurants/${restaurant.id}/menu`,
@@ -466,17 +720,14 @@ export default function FoodScreen({ userId, onBack }) {
     } catch {
       if (!mountedRef.current) return;
       setMenuItems([]);
-      showToast(
-        'error',
-        'Could not load menu',
-        'Please try again'
-      );
+      showToast('error', 'Could not load menu',
+        'Please try again');
     } finally {
       if (mountedRef.current) setMenuLoading(false);
     }
   }, []);
 
-  // ── CART FUNCTIONS ───────────────────────────
+  // ── CART FUNCTIONS ────────────────────────
   const addToCart = useCallback((item) => {
     setCart(prev => {
       const existing = prev.find(c => c.id === item.id);
@@ -510,12 +761,7 @@ export default function FoodScreen({ userId, onBack }) {
     });
   }, [saveCart]);
 
-  // ── COMPUTED (memoized) ──────────────────────
-  const cartCount = useMemo(() =>
-    cart.reduce((sum, i) => sum + i.quantity, 0),
-    [cart]
-  );
-
+  // ── COMPUTED ──────────────────────────────
   const cartTotal = useMemo(() =>
     cart.reduce(
       (sum, i) => sum + i.price * i.quantity, 0
@@ -555,32 +801,55 @@ export default function FoodScreen({ userId, onBack }) {
     ),
   ], [menuItems]);
 
-  // ── RENDER FUNCTIONS ─────────────────────────
-  const renderRestaurant = useCallback(({ item }) => (
-    <RestaurantCard
-      item={item}
-      rating={restaurantRatings[item.id]}
-      onPress={() => fetchMenu(item)}
-    />
-  ), [restaurantRatings, fetchMenu]);
-
-  const renderMenuItem = useCallback(({ item }) => {
-    const inCart = cart.find(c => c.id === item.id);
-    return (
-      <MenuItemCard
+  // ── RENDER FUNCTIONS ──────────────────────
+  const renderRestaurant = useCallback(
+    ({ item, index }) => (
+      <RestaurantCard
         item={item}
-        inCart={inCart}
-        onAdd={addToCart}
-        onRemove={removeFromCart}
+        rating={restaurantRatings[item.id]}
+        onPress={() => fetchMenu(item)}
+        index={index}
       />
-    );
-  }, [cart, addToCart, removeFromCart]);
+    ),
+    [restaurantRatings, fetchMenu]
+  );
+
+  const renderMenuItem = useCallback(
+    ({ item, index }) => {
+      const inCart = cart.find(c => c.id === item.id);
+      return (
+        <MenuItemCard
+          item={item}
+          inCart={inCart}
+          onAdd={addToCart}
+          onRemove={removeFromCart}
+          index={index}
+        />
+      );
+    },
+    [cart, addToCart, removeFromCart]
+  );
 
   const keyExtractor = useCallback(
     (item) => item.id.toString(), []
   );
 
-  // ── CART SCREEN ──────────────────────────────
+  // ── HERO PARALLAX ─────────────────────────
+  const heroTranslate = heroScrollY.interpolate({
+    inputRange:  [0, 200],
+    outputRange: [0, -60],
+    extrapolate: 'clamp',
+  });
+
+  // ── SEARCH BAR WIDTH ──────────────────────
+  const searchBarBorder = searchWidth.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [colors.border, colors.cuisineColor],
+  });
+
+  // ============================================
+  // CART SCREEN
+  // ============================================
   if (showCart) {
     return (
       <CartScreen
@@ -591,7 +860,6 @@ export default function FoodScreen({ userId, onBack }) {
         onOrderPlaced={() => {
           setShowCart(false);
           setSelectedRestaurant(null);
-          // ✅ FIXED - clearCart now defined!
           clearCart();
           showToast(
             'success',
@@ -603,7 +871,9 @@ export default function FoodScreen({ userId, onBack }) {
     );
   }
 
-  // ── MENU SCREEN ──────────────────────────────
+  // ============================================
+  // MENU SCREEN
+  // ============================================
   if (selectedRestaurant) {
     const rating =
       restaurantRatings[selectedRestaurant.id];
@@ -616,20 +886,26 @@ export default function FoodScreen({ userId, onBack }) {
           translucent
         />
 
+        {/* Hero with Parallax */}
         <View style={styles.heroWrap}>
-          {selectedRestaurant.image_url ? (
-            <Image
-              source={{ uri: selectedRestaurant.image_url }}
-              style={styles.heroImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={styles.heroPlaceholder}>
-              <Text style={styles.heroPlaceholderEmoji}>
-                🍴
-              </Text>
-            </View>
-          )}
+          <Animated.View style={[
+            styles.heroParallaxWrap,
+            { transform: [{ translateY: heroTranslate }] },
+          ]}>
+            {selectedRestaurant.image_url ? (
+              <Image
+                source={{ uri: selectedRestaurant.image_url }}
+                style={styles.heroImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.heroPlaceholder}>
+                <Text style={styles.heroPlaceholderEmoji}>
+                  🍴
+                </Text>
+              </View>
+            )}
+          </Animated.View>
 
           <View style={styles.heroOverlay} />
 
@@ -668,11 +944,9 @@ export default function FoodScreen({ userId, onBack }) {
                 <Text style={styles.heroMetaIcon}>⭐</Text>
                 <Text style={styles.heroMetaText}>
                   {rating?.avg > 0
-                    ? rating.avg.toFixed(1)
-                    : 'New'}
+                    ? rating.avg.toFixed(1) : 'New'}
                   {rating?.total > 0
-                    ? ` (${rating.total})`
-                    : ''}
+                    ? ` (${rating.total})` : ''}
                 </Text>
               </View>
               <View style={styles.heroMetaDot} />
@@ -719,29 +993,20 @@ export default function FoodScreen({ userId, onBack }) {
           </TouchableOpacity>
         </View>
 
+        {/* Menu Category Chips */}
         <View style={styles.menuCatWrap}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.menuCatScroll}>
             {menuCategories.map((cat) => (
-              <TouchableOpacity
+              <CategoryChip
                 key={cat}
-                style={[
-                  styles.menuCatChip,
-                  selectedMenuCat === cat &&
-                  styles.menuCatChipActive,
-                ]}
+                label={cat}
+                active={selectedMenuCat === cat}
                 onPress={() => setSelectedMenuCat(cat)}
-                activeOpacity={0.8}>
-                <Text style={[
-                  styles.menuCatChipText,
-                  selectedMenuCat === cat &&
-                  styles.menuCatChipTextActive,
-                ]}>
-                  {cat}
-                </Text>
-              </TouchableOpacity>
+                activeColor={colors.cuisineColor}
+              />
             ))}
           </ScrollView>
         </View>
@@ -771,7 +1036,7 @@ export default function FoodScreen({ userId, onBack }) {
             </Text>
           </View>
         ) : (
-          <FlatList
+          <Animated.FlatList
             data={filteredMenu}
             keyExtractor={keyExtractor}
             renderItem={renderMenuItem}
@@ -781,20 +1046,24 @@ export default function FoodScreen({ userId, onBack }) {
             maxToRenderPerBatch={8}
             windowSize={8}
             initialNumToRender={5}
+            onScroll={Animated.event(
+              [{ nativeEvent: {
+                contentOffset: { y: heroScrollY }
+              }}],
+              { useNativeDriver: true }
+            )}
+            scrollEventThrottle={16}
             ListEmptyComponent={
-              <View style={styles.emptyWrap}>
-                <Text style={styles.emptyIcon}>🍽️</Text>
-                <Text style={styles.emptyTitle}>
-                  No items available
-                </Text>
-                <Text style={styles.emptySub}>
-                  Check back soon!
-                </Text>
-              </View>
+              <AnimatedEmpty
+                icon="🍽️"
+                title="No items available"
+                sub="Check back soon!"
+              />
             }
           />
         )}
 
+        {/* Floating Cart */}
         <Animated.View style={[
           styles.floatingCartWrap,
           {
@@ -834,9 +1103,7 @@ export default function FoodScreen({ userId, onBack }) {
               <Text style={styles.floatingCartTotal}>
                 ₱{cartTotal.toFixed(2)}
               </Text>
-              <Text style={styles.floatingCartArrow}>
-                →
-              </Text>
+              <Text style={styles.floatingCartArrow}>→</Text>
             </View>
           </TouchableOpacity>
         </Animated.View>
@@ -844,7 +1111,9 @@ export default function FoodScreen({ userId, onBack }) {
     );
   }
 
-  // ── RESTAURANT LIST ──────────────────────────
+  // ============================================
+  // RESTAURANT LIST
+  // ============================================
   return (
     <View style={styles.container}>
       <StatusBar
@@ -852,6 +1121,7 @@ export default function FoodScreen({ userId, onBack }) {
         barStyle="dark-content"
       />
 
+      {/* Header */}
       <Animated.View style={[
         styles.header,
         { opacity: headerAnim },
@@ -889,10 +1159,11 @@ export default function FoodScreen({ userId, onBack }) {
         </Text>
       </Animated.View>
 
+      {/* Animated Search Bar */}
       <View style={styles.searchWrap}>
-        <View style={[
+        <Animated.View style={[
           styles.searchBar,
-          searchFocused && styles.searchBarFocused,
+          { borderColor: searchBarBorder },
         ]}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
@@ -901,8 +1172,8 @@ export default function FoodScreen({ userId, onBack }) {
             placeholderTextColor={colors.textMuted}
             value={searchText}
             onChangeText={setSearchText}
-            onFocus={() => setSearchFocused(true)}
-            onBlur={() => setSearchFocused(false)}
+            onFocus={onSearchFocus}
+            onBlur={onSearchBlur}
             returnKeyType="search"
             autoCorrect={false}
           />
@@ -913,32 +1184,23 @@ export default function FoodScreen({ userId, onBack }) {
               <Text style={styles.searchClear}>✕</Text>
             </TouchableOpacity>
           )}
-        </View>
+        </Animated.View>
       </View>
 
+      {/* Category Chips */}
       <View style={styles.catWrap}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.catScroll}>
           {CATEGORIES.map((cat) => (
-            <TouchableOpacity
+            <CategoryChip
               key={cat}
-              style={[
-                styles.catChip,
-                selectedCategory === cat &&
-                styles.catChipActive,
-              ]}
+              label={cat}
+              active={selectedCategory === cat}
               onPress={() => setSelectedCategory(cat)}
-              activeOpacity={0.8}>
-              <Text style={[
-                styles.catChipText,
-                selectedCategory === cat &&
-                styles.catChipTextActive,
-              ]}>
-                {cat}
-              </Text>
-            </TouchableOpacity>
+              activeColor={colors.cuisineColor}
+            />
           ))}
         </ScrollView>
       </View>
@@ -957,16 +1219,15 @@ export default function FoodScreen({ userId, onBack }) {
         </View>
       )}
 
+      {/* Loading Skeleton */}
       {loading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator
-            size="large"
-            color={colors.cuisineColor}
-          />
-          <Text style={styles.loadingText}>
-            Finding restaurants...
-          </Text>
-        </View>
+        <ScrollView
+          contentContainerStyle={styles.restaurantList}
+          showsVerticalScrollIndicator={false}>
+          {[1, 2, 3].map(i => (
+            <SkeletonCard key={i} />
+          ))}
+        </ScrollView>
       ) : (
         <FlatList
           data={filteredRestaurants}
@@ -987,27 +1248,17 @@ export default function FoodScreen({ userId, onBack }) {
             />
           }
           ListEmptyComponent={
-            <View style={styles.emptyWrap}>
-              <Text style={styles.emptyIcon}>🍔</Text>
-              <Text style={styles.emptyTitle}>
-                No restaurants found
-              </Text>
-              <Text style={styles.emptySub}>
-                {searchText
-                  ? `No results for "${searchText}"`
-                  : 'No restaurants open right now'}
-              </Text>
-              <TouchableOpacity
-                style={styles.emptyBtn}
-                onPress={() => {
-                  setSearchText('');
-                  setSelectedCategory('All');
-                }}>
-                <Text style={styles.emptyBtnText}>
-                  Clear Filters
-                </Text>
-              </TouchableOpacity>
-            </View>
+            <AnimatedEmpty
+              icon="🍔"
+              title="No restaurants found"
+              sub={searchText
+                ? `No results for "${searchText}"`
+                : 'No restaurants open right now'}
+              onClear={() => {
+                setSearchText('');
+                setSelectedCategory('All');
+              }}
+            />
           }
         />
       )}
@@ -1016,13 +1267,62 @@ export default function FoodScreen({ userId, onBack }) {
 }
 
 // ============================================
-// STYLES - same as before, keeping them all
+// STYLES
 // ============================================
 const styles = StyleSheet.create({
   container: {
     flex:            1,
     backgroundColor: colors.background,
   },
+
+  // ── SKELETON ────────────────────────────────
+  skeletonCard: {
+    backgroundColor: colors.cardBackground,
+    borderRadius:    borderRadius.xxlarge,
+    marginBottom:    16,
+    overflow:        'hidden',
+    borderWidth:     1,
+    borderColor:     colors.border,
+  },
+  skeletonImg: {
+    height:          170,
+    backgroundColor: colors.inputBackground,
+  },
+  skeletonBody: {
+    padding: 16,
+    gap:     10,
+  },
+  skeletonLine1: {
+    height:          20,
+    width:           '60%',
+    backgroundColor: colors.inputBackground,
+    borderRadius:    6,
+  },
+  skeletonLine2: {
+    height:          14,
+    width:           '80%',
+    backgroundColor: colors.inputBackground,
+    borderRadius:    6,
+  },
+  skeletonLine3: {
+    height:          12,
+    width:           '45%',
+    backgroundColor: colors.inputBackground,
+    borderRadius:    6,
+  },
+  skeletonMeta: {
+    height:          40,
+    backgroundColor: colors.inputBackground,
+    borderRadius:    borderRadius.medium,
+    marginVertical:  4,
+  },
+  skeletonBtn: {
+    height:          44,
+    backgroundColor: colors.inputBackground,
+    borderRadius:    borderRadius.large,
+  },
+
+  // ── HEADER ──────────────────────────────────
   header: {
     backgroundColor:   colors.headerBg,
     paddingTop:        52,
@@ -1070,19 +1370,19 @@ const styles = StyleSheet.create({
     borderColor:     colors.borderGold,
     position:        'relative',
   },
-  headerCartIcon: { fontSize: 18 },
+  headerCartIcon:  { fontSize: 18 },
   headerCartBadge: {
-    position:        'absolute',
-    top:             -4,
-    right:           -4,
-    minWidth:        18,
-    height:          18,
-    borderRadius:    9,
-    backgroundColor: colors.danger,
-    alignItems:      'center',
-    justifyContent:  'center',
-    borderWidth:     1.5,
-    borderColor:     colors.cardBackground,
+    position:          'absolute',
+    top:               -4,
+    right:             -4,
+    minWidth:          18,
+    height:            18,
+    borderRadius:      9,
+    backgroundColor:   colors.danger,
+    alignItems:        'center',
+    justifyContent:    'center',
+    borderWidth:       1.5,
+    borderColor:       colors.cardBackground,
     paddingHorizontal: 3,
   },
   headerCartBadgeText: {
@@ -1096,10 +1396,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   headerSub: {
-    color:    colors.textLight,
-    fontSize: 12,
+    color:     colors.textLight,
+    fontSize:  12,
     marginTop: 2,
   },
+
+  // ── SEARCH ──────────────────────────────────
   searchWrap: {
     paddingHorizontal: 20,
     paddingVertical:   12,
@@ -1114,13 +1416,8 @@ const styles = StyleSheet.create({
     paddingVertical:   12,
     flexDirection:     'row',
     alignItems:        'center',
-    borderWidth:       1,
-    borderColor:       colors.border,
+    borderWidth:       1.5,
     gap:               10,
-  },
-  searchBarFocused: {
-    borderColor:     colors.primary,
-    backgroundColor: colors.cardBackground,
   },
   searchIcon:  { fontSize: 16 },
   searchInput: {
@@ -1134,6 +1431,8 @@ const styles = StyleSheet.create({
     fontSize:   14,
     fontWeight: '700',
   },
+
+  // ── CATEGORIES ──────────────────────────────
   catWrap: {
     backgroundColor:   colors.cardBackground,
     borderBottomWidth: 1,
@@ -1152,10 +1451,6 @@ const styles = StyleSheet.create({
     borderWidth:       1,
     borderColor:       colors.border,
   },
-  catChipActive: {
-    backgroundColor: colors.cuisineColor,
-    borderColor:     colors.cuisineColor,
-  },
   catChipText: {
     fontSize:   12,
     color:      colors.textMedium,
@@ -1165,6 +1460,8 @@ const styles = StyleSheet.create({
     color:      colors.textWhite,
     fontWeight: '900',
   },
+
+  // ── RESULTS ROW ─────────────────────────────
   resultsRow: {
     flexDirection:     'row',
     alignItems:        'center',
@@ -1184,6 +1481,8 @@ const styles = StyleSheet.create({
     fontSize:   12,
     fontWeight: '700',
   },
+
+  // ── LOADING ─────────────────────────────────
   loadingWrap: {
     flex:           1,
     alignItems:     'center',
@@ -1195,13 +1494,15 @@ const styles = StyleSheet.create({
     fontSize:   13,
     fontWeight: '600',
   },
+
+  // ── EMPTY ───────────────────────────────────
   emptyWrap: {
     alignItems:        'center',
     justifyContent:    'center',
     paddingVertical:   60,
     paddingHorizontal: 40,
   },
-  emptyIcon: { fontSize: 60, marginBottom: 16 },
+  emptyIcon:  { fontSize: 60, marginBottom: 16 },
   emptyTitle: {
     fontSize:     20,
     fontWeight:   '900',
@@ -1216,18 +1517,20 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   emptyBtn: {
-    backgroundColor: colors.primaryPale,
+    backgroundColor:   colors.primaryPale,
     paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius:    borderRadius.large,
-    borderWidth:     1,
-    borderColor:     colors.borderGold,
+    paddingVertical:   12,
+    borderRadius:      borderRadius.large,
+    borderWidth:       1,
+    borderColor:       colors.borderGold,
   },
   emptyBtnText: {
     color:      colors.primary,
     fontWeight: '800',
     fontSize:   13,
   },
+
+  // ── RESTAURANT LIST ─────────────────────────
   restaurantList: {
     padding:       16,
     paddingBottom: 30,
@@ -1272,13 +1575,13 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   catTag: {
-    position:        'absolute',
-    bottom:          12,
-    right:           12,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    position:          'absolute',
+    bottom:            12,
+    right:             12,
+    backgroundColor:   'rgba(0,0,0,0.55)',
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius:    borderRadius.round,
+    paddingVertical:   4,
+    borderRadius:      borderRadius.round,
   },
   catTagText: {
     color:      colors.textWhite,
@@ -1300,25 +1603,25 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   ratingWrap: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    backgroundColor: colors.primaryPale,
+    flexDirection:     'row',
+    alignItems:        'center',
+    backgroundColor:   colors.primaryPale,
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius:    borderRadius.small,
-    gap:             3,
-    borderWidth:     1,
-    borderColor:     colors.borderGold,
+    paddingVertical:   4,
+    borderRadius:      borderRadius.small,
+    gap:               3,
+    borderWidth:       1,
+    borderColor:       colors.borderGold,
   },
-  ratingStar: { fontSize: 11 },
+  ratingStar:   { fontSize: 11 },
   ratingText: {
     color:      colors.primary,
     fontSize:   12,
     fontWeight: '800',
   },
   ratingCount: {
-    color:    colors.textMuted,
-    fontSize: 10,
+    color:      colors.textMuted,
+    fontSize:   10,
     fontWeight: '600',
   },
   restaurantDesc: {
@@ -1370,7 +1673,20 @@ const styles = StyleSheet.create({
     fontSize:      13,
     letterSpacing: 0.5,
   },
-  heroWrap: { height: 300, position: 'relative' },
+
+  // ── HERO ────────────────────────────────────
+  heroWrap: {
+    height:   300,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  heroParallaxWrap: {
+    position: 'absolute',
+    top:      -30,
+    left:     0,
+    right:    0,
+    height:   360,
+  },
   heroImage: { width: '100%', height: '100%' },
   heroPlaceholder: {
     width:           '100%',
@@ -1428,13 +1744,13 @@ const styles = StyleSheet.create({
     flexWrap:      'wrap',
   },
   heroMetaItem: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             4,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               4,
+    backgroundColor:   'rgba(255,255,255,0.15)',
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius:    borderRadius.round,
+    paddingVertical:   4,
+    borderRadius:      borderRadius.round,
   },
   heroMetaIcon: { fontSize: 12 },
   heroMetaText: {
@@ -1479,17 +1795,17 @@ const styles = StyleSheet.create({
   },
   heroCartIcon: { fontSize: 20 },
   heroCartBadge: {
-    position:        'absolute',
-    top:             -4,
-    right:           -4,
-    minWidth:        18,
-    height:          18,
-    borderRadius:    9,
-    backgroundColor: colors.danger,
-    alignItems:      'center',
-    justifyContent:  'center',
-    borderWidth:     1.5,
-    borderColor:     colors.cardBackground,
+    position:          'absolute',
+    top:               -4,
+    right:             -4,
+    minWidth:          18,
+    height:            18,
+    borderRadius:      9,
+    backgroundColor:   colors.danger,
+    alignItems:        'center',
+    justifyContent:    'center',
+    borderWidth:       1.5,
+    borderColor:       colors.cardBackground,
     paddingHorizontal: 3,
   },
   heroCartBadgeText: {
@@ -1497,6 +1813,8 @@ const styles = StyleSheet.create({
     fontSize:   9,
     fontWeight: '900',
   },
+
+  // ── MENU CATEGORIES ─────────────────────────
   menuCatWrap: {
     backgroundColor:   colors.cardBackground,
     borderBottomWidth: 1,
@@ -1548,6 +1866,8 @@ const styles = StyleSheet.create({
     fontSize:   12,
     fontWeight: '800',
   },
+
+  // ── MENU LIST ───────────────────────────────
   menuList: {
     padding:       16,
     paddingBottom: 120,
@@ -1633,7 +1953,7 @@ const styles = StyleSheet.create({
     alignItems:      'center',
     justifyContent:  'center',
     borderWidth:     1,
-    borderColor:     colors.cuisineBorder,
+    borderColor:     colors.cuisineBorder || colors.border,
   },
   menuItemImgEmoji: { fontSize: 38 },
   addBtn: {
@@ -1651,6 +1971,8 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     fontSize:   16,
   },
+
+  // ── FLOATING CART ───────────────────────────
   floatingCartWrap: {
     position: 'absolute',
     bottom:   20,
@@ -1693,8 +2015,8 @@ const styles = StyleSheet.create({
     fontSize:   15,
   },
   floatingCartSub: {
-    color:    'rgba(255,255,255,0.5)',
-    fontSize: 10,
+    color:      'rgba(255,255,255,0.5)',
+    fontSize:   10,
     fontWeight: '600',
   },
   floatingCartRight: {

@@ -728,54 +728,82 @@ export default function ProducerDashboardScreen({
   const [updatingOrder, setUpdatingOrder]     = useState(null);
   const [togglingProduct, setTogglingProduct] = useState(null);
 
-  // ── FETCH ────────────────────────────────────
   const fetchData = useCallback(async () => {
+    if (!userId) {
+      console.log('⚠️ No userId - skipping fetch');
+      return;
+    }
+
+    // WAG mag-setError(true) dito. Reset lang.
     setError(false);
+    // Wag din i-set ang loading sa false agad kung mag-re-retry tayo.
+
     try {
       const res = await axios.get(
         `${API_URL}/producer/dashboard/${userId}`,
-        { timeout: 10000 }
+        { timeout: 20000 }
       );
-      setData(res.data);
+      
+      if (res.data) {
+        setData(res.data);
+        setError(false); // Success!
+        setLoading(false); // Dito lang tayo mag-stop loading
+      }
     } catch (err) {
+      const code = err.code;
+      console.log('Dashboard fetch error:', code, err.message);
+
+      if (code === 'ECONNABORTED' || code === 'ERR_NETWORK') {
+        console.log('🔄 Railway waking up - retrying in 4s...');
+        // IMPORTANT: Wag mag-setError(true) dito para hindi lumabas yung ⚠️ screen!
+        setTimeout(() => fetchData(), 4000);
+        return; // Exit function, antayin ang retry
+      }
+      
+      // Real error lang (hindi cold start) ang magpapakita ng Error Screen
       setError(true);
+      setLoading(false); 
     } finally {
-      setLoading(false);
       setRefreshing(false);
+      // Inalis ko ang setLoading(false) dito para hindi mag-flicker ang screen habang nag-re-retry
     }
   }, [userId]);
 
   const fetchProducts = useCallback(async () => {
-    setLoadingProducts(true);
-    try {
-      const res = await axios.get(
-        `${API_URL}/producer/products/${userId}`,
-        { timeout: 10000 }
-      );
-      setProducts(res.data.products || []);
-    } catch {
-      setProducts([]);
-    } finally {
-      setLoadingProducts(false);
-    }
-  }, [userId]);
+  if (!userId) return; // ← ADD THIS!
+  setLoadingProducts(true);
+  try {
+    const res = await axios.get(
+      `${API_URL}/producer/products/${userId}`,
+      { timeout: 20000 } // ← increase timeout!
+    );
+    setProducts(res.data.products || []);
+  } catch {
+    setProducts([]);
+  } finally {
+    setLoadingProducts(false);
+  }
+}, [userId]);
 
   const fetchOrders = useCallback(async () => {
-    setLoadingOrders(true);
-    try {
-      const res = await axios.get(
-        `${API_URL}/producer/orders/${userId}`,
-        { timeout: 10000 }
-      );
-      setOrders(res.data.orders || []);
-    } catch {
-      setOrders([]);
-    } finally {
-      setLoadingOrders(false);
-    }
-  }, [userId]);
+  if (!userId) return; // ← ADD THIS!
+  setLoadingOrders(true);
+  try {
+    const res = await axios.get(
+      `${API_URL}/producer/orders/${userId}`,
+      { timeout: 20000 } // ← increase timeout!
+    );
+    setOrders(res.data.orders || []);
+  } catch {
+    setOrders([]);
+  } finally {
+    setLoadingOrders(false);
+  }
+}, [userId]);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+  if (userId) fetchData();
+}, [userId]); // ← re-runs when userId arrives!
 
   useEffect(() => {
     if (activeTab === 'products') fetchProducts();
@@ -950,10 +978,18 @@ export default function ProducerDashboardScreen({
           backgroundColor={colors.headerBg}
           barStyle="dark-content"
         />
+        
         <Text style={styles.errorEmoji}>⚠️</Text>
+        
+        {/* Ang iyong bagong Debug Line */}
+        <Text style={{ color: 'red', fontSize: 12, marginBottom: 8, textAlign: 'center' }}>
+          Debug: userId = {String(userId)} | error = {String(error)}
+        </Text>
+        
         <Text style={styles.errorTitle}>
           Could not load dashboard
         </Text>
+
         <TouchableOpacity
           style={styles.retryBtn}
           onPress={fetchData}>
@@ -961,6 +997,7 @@ export default function ProducerDashboardScreen({
             Try Again
           </Text>
         </TouchableOpacity>
+
         <TouchableOpacity
           style={styles.backLink}
           onPress={onBack}>
