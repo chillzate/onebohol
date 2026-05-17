@@ -1,3 +1,6 @@
+# ============================================
+# ZAVARA MODELS.PY - COMPLETE VERSION
+# ============================================
 from sqlalchemy import (
     Column, Integer, String, Float,
     ForeignKey, Boolean, Text, DateTime
@@ -5,6 +8,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
+
 
 # ============================================
 # USER MODEL
@@ -14,7 +18,10 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=False)
+    email = Column(
+        String, unique=True,
+        index=True, nullable=False
+    )
     password = Column(String, nullable=False)
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
@@ -26,40 +33,43 @@ class User(Base):
     is_verified = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
 
-    # For Producers (farmers/fishermen)
-    farm_name = Column(String, nullable=True)         # ← ADD
-    farm_location = Column(String, nullable=True)     # ← ADD
-    farm_description = Column(Text, nullable=True)    # ← ADD
+    # For Producers
+    farm_name = Column(String, nullable=True)
+    farm_location = Column(String, nullable=True)
+    farm_description = Column(Text, nullable=True)
 
-    # For Cuisine partners (restaurants)
-    restaurant_name = Column(String, nullable=True)   # ← ADD
-    restaurant_address = Column(String, nullable=True)# ← ADD
-    opening_hours = Column(String, nullable=True)     # ← ADD
+    # For Cuisine Partners
+    restaurant_name = Column(String, nullable=True)
+    restaurant_address = Column(String, nullable=True)
+    opening_hours = Column(String, nullable=True)
 
     # GCash Info
-    gcash_number = Column(String, nullable=True)      # ← ADD
-    gcash_name = Column(String, nullable=True)        # ← ADD
+    gcash_number = Column(String, nullable=True)
+    gcash_name = Column(String, nullable=True)
 
     # Stats
-    total_sales = Column(Float, default=0.0)          # ← ADD
-    total_orders = Column(Integer, default=0)         # ← ADD
+    total_sales = Column(Float, default=0.0)
+    total_orders = Column(Integer, default=0)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(
+        DateTime, default=datetime.utcnow
+    )
 
     products = relationship(
-        "Product", 
+        "Product",
         back_populates="farmer",
         foreign_keys="Product.farmer_id"
     )
     orders = relationship(
-        "Order", 
+        "Order",
         back_populates="buyer",
         foreign_keys="Order.buyer_id"
     )
     verifications = relationship(
-        "VerificationRequest", 
+        "VerificationRequest",
         back_populates="user"
     )
+
 
 # ============================================
 # REVIEW MODEL
@@ -93,6 +103,7 @@ class Review(Base):
 
     user = relationship("User")
 
+
 # ============================================
 # VERIFICATION REQUEST MODEL
 # ============================================
@@ -102,19 +113,10 @@ class VerificationRequest(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
 
-    # Role they are applying for
-    # producer / seller / transport / haven / cuisine
     requested_role = Column(String, nullable=False)
-
-    # Partner sub-type
-    # producer: farmer / fisherman / livestock / crop
-    # seller: market_vendor / sari_sari / small_business
-    # transport: motorcycle / van / truck / courier
-    # haven: hotel / resort / pension / homestay
-    # cuisine: restaurant / carinderia / food_stall
     partner_type = Column(String, nullable=True)
 
-    # Document URLs (stored as comma-separated)
+    # Document URLs
     valid_id_url = Column(String, nullable=True)
     document_url = Column(String, nullable=True)
     selfie_url = Column(String, nullable=True)
@@ -126,14 +128,19 @@ class VerificationRequest(Base):
     business_address = Column(String, nullable=True)
     description = Column(Text, nullable=True)
 
-    # Status: pending / under_review / approved / rejected
+    # Status
     status = Column(String, default="pending")
     rejection_reason = Column(String, nullable=True)
     reviewed_by = Column(Integer, nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(
+        DateTime, default=datetime.utcnow
+    )
 
-    user = relationship("User", back_populates="verifications")
+    user = relationship(
+        "User", back_populates="verifications"
+    )
+
 
 # ============================================
 # RESTAURANT MODEL
@@ -151,9 +158,14 @@ class Restaurant(Base):
     delivery_range_km = Column(Float, default=5.0)
     delivery_fee = Column(Float, default=50.0)
     image_url = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(
+        DateTime, default=datetime.utcnow
+    )
 
-    menu_items = relationship("MenuItem", back_populates="restaurant")
+    menu_items = relationship(
+        "MenuItem", back_populates="restaurant"
+    )
+
 
 # ============================================
 # MENU ITEM MODEL
@@ -162,7 +174,9 @@ class MenuItem(Base):
     __tablename__ = "menu_items"
 
     id = Column(Integer, primary_key=True, index=True)
-    restaurant_id = Column(Integer, ForeignKey("restaurants.id"))
+    restaurant_id = Column(
+        Integer, ForeignKey("restaurants.id")
+    )
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     price = Column(Float, nullable=False)
@@ -170,10 +184,13 @@ class MenuItem(Base):
     is_available = Column(Boolean, default=True)
     image_url = Column(String, nullable=True)
 
-    restaurant = relationship("Restaurant", back_populates="menu_items")
+    restaurant = relationship(
+        "Restaurant", back_populates="menu_items"
+    )
+
 
 # ============================================
-# PRODUCT MODEL (Farm/Market Products)
+# PRODUCT MODEL
 # ============================================
 class Product(Base):
     __tablename__ = "products"
@@ -194,15 +211,16 @@ class Product(Base):
     total_reviews = Column(Integer, default=0)
     barangay = Column(String, nullable=True)
     municipality = Column(String, nullable=True)
-
-    # ✅ NEW - controls who sees this product
-    # "wholesale" = sellers/producers only
-    # "retail"    = regular customers
     market_type = Column(String, default="wholesale")
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(
+        DateTime, default=datetime.utcnow
+    )
 
-    farmer = relationship("User", back_populates="products")
+    farmer = relationship(
+        "User", back_populates="products"
+    )
+
 
 # ============================================
 # ORDER MODEL
@@ -212,41 +230,82 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     buyer_id = Column(Integer, ForeignKey("users.id"))
-    seller_id = Column(                              # ← ADD THIS
-        Integer, ForeignKey("users.id"), nullable=True
+    seller_id = Column(
+        Integer, ForeignKey("users.id"),
+        nullable=True
     )
     product_id = Column(
-        Integer, ForeignKey("products.id"), nullable=True
+        Integer, ForeignKey("products.id"),
+        nullable=True
     )
     menu_item_id = Column(
-        Integer, ForeignKey("menu_items.id"), nullable=True
+        Integer, ForeignKey("menu_items.id"),
+        nullable=True
     )
     quantity = Column(Integer, nullable=False)
     total_price = Column(Float, nullable=False)
-    delivery_fee = Column(Float, default=0.0)        # ← ADD THIS
-    grand_total = Column(Float, nullable=True)        # ← ADD THIS
+    delivery_fee = Column(Float, default=0.0)
+    grand_total = Column(Float, nullable=True)
     status = Column(String, default="pending")
     order_type = Column(String, nullable=False)
     delivery_address = Column(String, nullable=True)
-    delivery_notes = Column(String, nullable=True)   # ← ADD THIS
-    
-    # Payment                                        # ← ADD ALL THESE
-    payment_method = Column(String, default="cod")   # cod/gcash
+    delivery_notes = Column(String, nullable=True)
+
+    # Payment
+    payment_method = Column(String, default="cod")
     payment_status = Column(String, default="unpaid")
     gcash_screenshot = Column(String, nullable=True)
     gcash_reference = Column(String, nullable=True)
-    
-    # Review tracking
-    is_reviewed = Column(Boolean, default=False)     # ← ADD THIS
-    
-    cancel_reason = Column(String, nullable=True)    # ← ADD THIS
-    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Tracking timestamps
+    status_updated_at = Column(DateTime, nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    preparing_at = Column(DateTime, nullable=True)
+    delivering_at = Column(DateTime, nullable=True)
+    delivered_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+
+    # ETA & Rider Info
+    estimated_minutes = Column(Integer, default=30)
+    eta_minutes = Column(Integer, nullable=True)
+    rider_name = Column(String, nullable=True)
+    rider_phone = Column(String, nullable=True)
+
+    # Flags
+    is_reviewed = Column(Boolean, default=False)
+    cancel_reason = Column(String, nullable=True)
+
+    created_at = Column(
+        DateTime, default=datetime.utcnow
+    )
 
     buyer = relationship(
-        "User", 
+        "User",
         back_populates="orders",
-        foreign_keys=[buyer_id]        # ← Important! Two FKs to User
+        foreign_keys=[buyer_id]
     )
+
+
+# ============================================
+# ORDER STATUS HISTORY MODEL
+# ============================================
+class OrderStatusHistory(Base):
+    __tablename__ = "order_status_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(
+        Integer, ForeignKey("orders.id")
+    )
+    old_status = Column(String, nullable=True)
+    new_status = Column(String, nullable=False)
+    changed_by = Column(Integer, nullable=True)
+    note = Column(String, nullable=True)
+    created_at = Column(
+        DateTime, default=datetime.utcnow
+    )
+
+    order = relationship("Order")
+
 
 # ============================================
 # RIDE REQUEST MODEL
@@ -255,14 +314,19 @@ class RideRequest(Base):
     __tablename__ = "ride_requests"
 
     id = Column(Integer, primary_key=True, index=True)
-    passenger_id = Column(Integer, ForeignKey("users.id"))
+    passenger_id = Column(
+        Integer, ForeignKey("users.id")
+    )
     pickup_location = Column(String, nullable=False)
     dropoff_location = Column(String, nullable=False)
     ride_type = Column(String, nullable=False)
     vehicle_type = Column(String, nullable=True)
     status = Column(String, default="pending")
     fare = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(
+        DateTime, default=datetime.utcnow
+    )
+
 
 # ============================================
 # JOB POST MODEL
@@ -278,7 +342,10 @@ class JobPost(Base):
     salary = Column(Float, nullable=True)
     job_type = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(
+        DateTime, default=datetime.utcnow
+    )
+
 
 # ============================================
 # SOS ALERT MODEL
@@ -291,4 +358,6 @@ class SosAlert(Base):
     location = Column(String, nullable=False)
     alert_type = Column(String, nullable=False)
     status = Column(String, default="active")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(
+        DateTime, default=datetime.utcnow
+    )

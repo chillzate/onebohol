@@ -1,7 +1,9 @@
-# database.py
+# ============================================
+# ZAVARA DATABASE.PY
+# ============================================
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from dotenv import load_dotenv
 import os
 
@@ -12,7 +14,7 @@ DATABASE_URL = os.getenv(
     "sqlite:///./zavara.db"
 )
 
-# Railway fix
+# Railway PostgreSQL fix
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace(
         "postgres://",
@@ -20,7 +22,7 @@ if DATABASE_URL.startswith("postgres://"):
         1
     )
 
-# ✅ Force psycopg2 driver explicitly
+# Force psycopg2 driver
 if "postgresql" in DATABASE_URL:
     if "psycopg2" not in DATABASE_URL:
         DATABASE_URL = DATABASE_URL.replace(
@@ -29,12 +31,11 @@ if "postgresql" in DATABASE_URL:
             1
         )
 
+# Engine setup
 if "sqlite" in DATABASE_URL:
     engine = create_engine(
         DATABASE_URL,
-        connect_args={
-            "check_same_thread": False
-        }
+        connect_args={"check_same_thread": False}
     )
 else:
     engine = create_engine(
@@ -51,3 +52,14 @@ SessionLocal = sessionmaker(
 )
 
 Base = declarative_base()
+
+
+# ============================================
+# SHARED DB DEPENDENCY - used by ALL routes
+# ============================================
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

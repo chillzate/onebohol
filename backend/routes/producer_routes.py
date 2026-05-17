@@ -1,14 +1,23 @@
-producer_routes = '''
-
 # ============================================
-# PRODUCER DASHBOARD ROUTES
+# ZAVARA PRODUCER ROUTES
 # ============================================
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from database import get_db
+from models import User, Product, Order
+from schemas import ProductCreate
+from typing import Optional
+from datetime import datetime
+import httpx
 
-@app.get("/producer/dashboard/{user_id}")
-def get_producer_dashboard(
-    user_id: int,
-    db: Session = Depends(get_db)
-):
+router = APIRouter(
+    prefix="/producer",
+    tags=["Producer"]
+)
+
+
+def _check_producer(user_id: int, db: Session):
+    """Reusable producer role check"""
     user = db.query(User).filter(
         User.id == user_id
     ).first()
@@ -22,6 +31,52 @@ def get_producer_dashboard(
             status_code=403,
             detail="Producer access only"
         )
+    return user
+
+
+async def _push(
+    token: str,
+    title: str,
+    body: str,
+    data: dict = None
+) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.post(
+                "https://exp.host/--/api/v2/push/send",
+                json={
+                    "to": token,
+                    "title": title,
+                    "body": body,
+                    "sound": "default",
+                    "badge": 1,
+                    "priority": "high",
+                    "data": data or {}
+                },
+                headers={"Content-Type": "application/json"}
+            )
+            result = res.json()
+            if "errors" in result:
+                print(f"⚠️ Push error: {result['errors']}")
+                return False
+            return True
+    except httpx.TimeoutException:
+        print(f"⚠️ Push timeout")
+        return False
+    except Exception as e:
+        print(f"⚠️ Push failed: {str(e)}")
+        return False
+
+
+# ============================================
+# DASHBOARD
+# ============================================
+@router.get("/dashboard/{user_id}")
+def get_producer_dashboard(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    user = _check_producer(user_id, db)
 
     total_products = db.query(Product).filter(
         Product.farmer_id == user_id
@@ -64,6 +119,7 @@ def get_producer_dashboard(
         ).first()
         recent_orders_data.append({
             "order_id": order.id,
+            "order_code": f"#{str(order.id).zfill(4)}",
             "buyer_name": buyer.name if buyer else "Unknown",
             "buyer_phone": buyer.phone if buyer else "",
             "quantity": order.quantity,
@@ -74,6 +130,7 @@ def get_producer_dashboard(
             "payment_status": order.payment_status,
             "delivery_address": order.delivery_address,
             "order_type": order.order_type,
+            "eta_minutes": order.eta_minutes,
             "created_at": str(order.created_at)
         })
 
@@ -115,24 +172,15 @@ def get_producer_dashboard(
     }
 
 
-@app.get("/producer/products/{user_id}")
+# ============================================
+# PRODUCTS
+# ============================================
+@router.get("/products/{user_id}")
 def get_producer_products(
     user_id: int,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(
-        User.id == user_id
-    ).first()
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-    if user.role not in ["producer", "admin"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Producer access only"
-        )
+    _check_producer(user_id, db)
 
     products = db.query(Product).filter(
         Product.farmer_id == user_id
@@ -157,6 +205,7 @@ def get_producer_products(
                 "total_reviews": p.total_reviews,
                 "barangay": p.barangay,
                 "municipality": p.municipality,
+                "market_type": p.market_type,
                 "created_at": str(p.created_at)
             }
             for p in products
@@ -164,25 +213,13 @@ def get_producer_products(
     }
 
 
-@app.post("/producer/products/{user_id}")
+@router.post("/products/{user_id}")
 def add_producer_product(
     user_id: int,
     product: ProductCreate,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(
-        User.id == user_id
-    ).first()
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-    if user.role not in ["producer", "admin"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Producer access only"
-        )
+    _check_producer(user_id, db)
 
     new_product = Product(
         farmer_id=user_id,
@@ -192,6 +229,7 @@ def add_producer_product(
         unit=product.unit,
         quantity=product.quantity,
         category=product.category,
+        market_type=product.market_type,
         is_available=True,
         is_approved=False,
         total_sold=0,
@@ -202,14 +240,14 @@ def add_producer_product(
     db.refresh(new_product)
 
     return {
-        "message": "Product added! Waiting for admin approval.",
+        "message": "✅ Product added! Waiting for admin approval.",
         "product_id": new_product.id,
         "name": new_product.name,
         "status": "pending_approval"
     }
 
 
-@app.put("/producer/products/{product_id}/edit")
+@router.put("/products/{product_id}/edit")
 def edit_producer_product(
     product_id: int,
     user_id: int,
@@ -231,7 +269,7 @@ def edit_producer_product(
     if not product:
         raise HTTPException(
             status_code=404,
-            detail="Product not found"
+            detail="Product not found or not yours"
         )
 
     if name is not None:
@@ -239,8 +277,18 @@ def edit_producer_product(
     if description is not None:
         product.description = description
     if price is not None:
+        if price <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Price must be positive"
+            )
         product.price = price
     if quantity is not None:
+        if quantity < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Quantity cannot be negative"
+            )
         product.quantity = quantity
     if unit is not None:
         product.unit = unit
@@ -257,13 +305,13 @@ def edit_producer_product(
     db.refresh(product)
 
     return {
-        "message": "Product updated!",
+        "message": "✅ Product updated!",
         "product_id": product.id,
         "name": product.name
     }
 
 
-@app.delete("/producer/products/{product_id}/remove")
+@router.delete("/products/{product_id}/remove")
 def delete_producer_product(
     product_id: int,
     user_id: int,
@@ -278,40 +326,28 @@ def delete_producer_product(
             status_code=404,
             detail="Product not found or not yours"
         )
-
     db.delete(product)
     db.commit()
-
     return {
-        "message": "Product deleted!",
+        "message": "✅ Product deleted!",
         "product_id": product_id
     }
 
 
-@app.get("/producer/orders/{user_id}")
+# ============================================
+# ORDERS
+# ============================================
+@router.get("/orders/{user_id}")
 def get_producer_orders(
     user_id: int,
     status: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(
-        User.id == user_id
-    ).first()
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-    if user.role not in ["producer", "admin"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Producer access only"
-        )
+    _check_producer(user_id, db)
 
     query = db.query(Order).filter(
         Order.seller_id == user_id
     )
-
     if status:
         query = query.filter(Order.status == status)
 
@@ -324,7 +360,6 @@ def get_producer_orders(
         buyer = db.query(User).filter(
             User.id == order.buyer_id
         ).first()
-
         product = None
         if order.product_id:
             product = db.query(Product).filter(
@@ -333,6 +368,7 @@ def get_producer_orders(
 
         result.append({
             "order_id": order.id,
+            "order_code": f"#{str(order.id).zfill(4)}",
             "buyer_name": buyer.name if buyer else "Unknown",
             "buyer_phone": buyer.phone if buyer else "",
             "product_name": product.name if product else "Unknown",
@@ -347,131 +383,18 @@ def get_producer_orders(
             "delivery_address": order.delivery_address,
             "is_reviewed": order.is_reviewed,
             "order_type": order.order_type,
+            "eta_minutes": order.eta_minutes,
+            "rider_name": order.rider_name,
             "created_at": str(order.created_at)
         })
 
-    return {
-        "total": len(result),
-        "orders": result
-    }
+    return {"total": len(result), "orders": result}
 
 
-@app.patch("/producer/orders/{order_id}/status")
-async def producer_update_order_status(
-    order_id: int,
-    user_id: int,
-    new_status: str,
-    note: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    valid_statuses = [
-        "confirmed", "preparing", "ready",
-        "delivering", "delivered", "cancelled"
-    ]
-    if new_status not in valid_statuses:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid status. Choose: {valid_statuses}"
-        )
-
-    order = db.query(Order).filter(
-        Order.id == order_id,
-        Order.seller_id == user_id
-    ).first()
-    if not order:
-        raise HTTPException(
-            status_code=404,
-            detail="Order not found"
-        )
-
-    order.status = new_status
-    if note:
-        order.delivery_notes = note
-
-    if new_status == "delivered":
-        if order.product_id:
-            product = db.query(Product).filter(
-                Product.id == order.product_id
-            ).first()
-            if product:
-                product.total_sold += order.quantity
-
-        seller = db.query(User).filter(
-            User.id == user_id
-        ).first()
-        if seller:
-            seller.total_sales += (
-                order.grand_total or order.total_price
-            )
-            seller.total_orders += 1
-
-    db.commit()
-
-    buyer = db.query(User).filter(
-        User.id == order.buyer_id
-    ).first()
-
-    messages = {
-        "confirmed": {
-            "title": "Order Confirmed!",
-            "body": f"Your order #{str(order_id).zfill(4)} confirmed!"
-        },
-        "preparing": {
-            "title": "Being Prepared!",
-            "body": f"Your order #{str(order_id).zfill(4)} is being prepared!"
-        },
-        "ready": {
-            "title": "Order Ready!",
-            "body": f"Your order #{str(order_id).zfill(4)} is ready!"
-        },
-        "delivering": {
-            "title": "On The Way!",
-            "body": f"Your order #{str(order_id).zfill(4)} is on its way!"
-        },
-        "delivered": {
-            "title": "Order Delivered!",
-            "body": f"Your order #{str(order_id).zfill(4)} delivered!"
-        },
-        "cancelled": {
-            "title": "Order Cancelled",
-            "body": f"Your order #{str(order_id).zfill(4)} was cancelled."
-        }
-    }
-
-    if buyer and buyer.push_token:
-        msg = messages.get(new_status)
-        if msg:
-            try:
-                async with httpx.AsyncClient() as client:
-                    await client.post(
-                        "https://exp.host/--/api/v2/push/send",
-                        json={
-                            "to": buyer.push_token,
-                            "title": msg["title"],
-                            "body": msg["body"],
-                            "sound": "default",
-                            "badge": 1,
-                            "data": {
-                                "order_id": order_id,
-                                "status": new_status
-                            }
-                        },
-                        headers={
-                            "Content-Type": "application/json"
-                        }
-                    )
-            except:
-                pass
-
-    return {
-        "message": f"Order updated to {new_status}",
-        "order_id": order_id,
-        "new_status": new_status,
-        "notification_sent": True
-    }
-
-
-@app.put("/producer/profile/{user_id}")
+# ============================================
+# PROFILE
+# ============================================
+@router.put("/profile/{user_id}")
 def update_producer_profile(
     user_id: int,
     farm_name: Optional[str] = None,
@@ -483,19 +406,7 @@ def update_producer_profile(
     gcash_name: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(
-        User.id == user_id
-    ).first()
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-    if user.role not in ["producer", "admin"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Producer access only"
-        )
+    user = _check_producer(user_id, db)
 
     if farm_name is not None:
         user.farm_name = farm_name
@@ -513,33 +424,23 @@ def update_producer_profile(
         user.gcash_name = gcash_name
 
     db.commit()
-
     return {
-        "message": "Profile updated!",
+        "message": "✅ Profile updated!",
         "user_id": user_id,
         "farm_name": user.farm_name,
         "farm_location": user.farm_location
     }
 
 
-@app.get("/producer/sales/{user_id}")
+# ============================================
+# SALES
+# ============================================
+@router.get("/sales/{user_id}")
 def get_producer_sales(
     user_id: int,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(
-        User.id == user_id
-    ).first()
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-    if user.role not in ["producer", "admin"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Producer access only"
-        )
+    user = _check_producer(user_id, db)
 
     all_orders = db.query(Order).filter(
         Order.seller_id == user_id
@@ -571,22 +472,11 @@ def get_producer_sales(
         "top_products": [
             {
                 "name": p.name,
-                "total_sold": p.total_sold,
+                "total_sold": p.total_sold or 0,
                 "price": p.price,
                 "unit": p.unit,
-                "revenue": p.total_sold * p.price
+                "revenue": (p.total_sold or 0) * p.price
             }
             for p in products[:5]
         ]
     }
-'''
-
-with open('main.py', 'r', encoding='utf-8') as f:
-    content = f.read()
-
-if '/producer/dashboard' in content:
-    print("Producer routes already exist!")
-else:
-    with open('main.py', 'a', encoding='utf-8') as f:
-        f.write(producer_routes)
-    print("Producer routes added successfully!")
