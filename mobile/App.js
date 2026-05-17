@@ -29,7 +29,7 @@ import LoginScreen              from './screens/LoginScreen';
 import RegisterScreen           from './screens/RegisterScreen';
 import HomeScreen               from './screens/HomeScreen';
 import ProfileScreen            from './screens/ProfileScreen';
-import VerifyScreen             from './screens/verifyscreen';
+import VerifyScreen from './screens/VerifyScreen';
 import ComingSoonScreen         from './screens/ComingSoonScreen';
 import OnboardingScreen         from './screens/OnboardingScreen';
 import AdminDashboardScreen     from './screens/AdminDashboardScreen';
